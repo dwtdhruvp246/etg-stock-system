@@ -75,7 +75,7 @@ const movementTone=type=>({
   'Stock Adjustment':['edit','amber'],'Damaged Stock':['alert','red'],'Stock Count Correction':['edit','amber'],
 })[type]||['box','grey'];
 const reportTypes=['Daily Stock Report','Current Stock Report','Warehouse Stock Report','Product Stock Report','Daily Dispatch Report','Daily Receipt Report','Stock Movement Report','Transaction Report','Low Stock Report','Out-of-Stock Report','Variance Report','Transporter Report','Client Dispatch Report','Stock Adjustment Report'];
-const initialFilters=()=>({search:'',warehouse:'',product:'',pack:'',status:'',min:'',max:'',updated:'',page:1,size:25,sort:'code',dir:1,expanded:false});
+const initialFilters=()=>({search:'',warehouse:'',product:'',pack:'',status:'',min:'',max:'',updated:'',sort:'code',dir:1,expanded:false});
 const view={stock:initialFilters(),transactions:{search:'',type:'',warehouse:'',page:1,size:25},reports:{type:'Current Stock Report',start:'',end:'',warehouse:'',product:'',code:'',transporter:'',client:'',movement:'',status:'',page:1,size:25}};
 const main=document.getElementById('main');
 const nav=document.getElementById('nav');
@@ -168,15 +168,15 @@ const filterSelect=(scope,label,name,choices,value,placeholder='All')=>field(lab
 const filterInput=(scope,label,name,value,type='text',attrs='')=>field(label,input(name,value,type,`data-filter="${scope}" ${attrs}`));
 const searchBox=(scope,placeholder,value)=>`<label class="search"><span>${icon('search')}</span>${input('search',value,'search',`data-filter="${scope}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}"`)}</label>`;
 function stockBody() {
-  const state=view.stock, list=stockRows(state), foot=pager('stock',state,list.length);
+  const state=view.stock, list=stockRows(state);
   const sortable=new Set(['code','sap','product','warehouse','balance','updatedAt']);
   const labels=[...stockCols.filter(([key])=>key!=='comment'),['actions','Actions']];
   const heading=labels.map(([key,label])=>`<th ${key==='balance'?'class="t-number"':''} ${state.sort===key?`aria-sort="${state.dir===1?'ascending':'descending'}"`:''}>${sortable.has(key)?`<button type="button" class="sort" data-action="sort" ${safeId(key)}>${esc(label)} ${icon(state.sort===key?(state.dir===1?'up':'down'):'sort')}</button>`:esc(key==='status'?'Status / Comments':label)}</th>`).join('');
-  const rows=slice(list,state).map(row=>{
+  const rows=list.map(row=>{
     const historyData=`${safeId(row.code)} ${safeId(row.warehouse,'warehouse')}`;
     return `<tr data-key="${row.id}"><td>${link(row.code,'history',historyData)}</td><td>${esc(row.sap)}</td><td>${link(row.product,'history',historyData)}</td><td>${esc(row.pack)}</td><td>${esc(warehouseName(db,row.warehouse))}</td><td class="t-number"><strong>${fmt(row.balance)}</strong></td><td>${badge(stockStatus(row))}${row.comment?`<span class="sub">${esc(row.comment)}</span>`:''}</td><td>${dateTime(row.updatedAt)}</td><td>${esc(row.updatedBy)}</td><td><div class="row-actions">${iconButton('Edit stock item','edit','edit-stock',safeId(row.id))}${iconButton('View stock history','history','history',historyData)}</div></td></tr>`;
   }).join('');
-  return `<div class="table-wrap" tabindex="0" aria-label="Stock records"><table class="stock-table"><thead><tr>${heading}</tr></thead><tbody>${rows||empty(10,'No stock records match your filters.')}</tbody></table></div>${foot}`;
+  return `<div class="table-wrap" tabindex="0" aria-label="Stock records"><table class="stock-table"><thead><tr>${heading}</tr></thead><tbody>${rows||empty(10,'No stock records match your filters.')}</tbody></table></div><div class="table-foot" data-key="stock-count">${count.format(list.length)} ${list.length===1?'record':'records'}</div>`;
 }
 function stockPage() {
   const state=view.stock, active=records(db);
@@ -424,7 +424,7 @@ function setFilter(event) {
   const state=view[scope], name=target.name, value=name==='size'?Number(target.value):target.value;
   if(state[name]===value) return;
   state[name]=value;
-  state.page=1;
+  if('page' in state) state.page=1;
   clearTimeout(searchTimeout);
   if(name==='type'&&scope==='reports'){state.status='';render(true);}
   else if(target.type==='search') searchTimeout=setTimeout(refreshParts,130);
@@ -895,7 +895,7 @@ const actions={
   sort:target=>{
     const key=target.dataset.id, state=view.stock;
     state.dir=state.sort===key?-state.dir:1;
-    state.sort=key;state.page=1;refreshParts();
+    state.sort=key;refreshParts();
   },
   paginate:target=>{
     const state=view[target.dataset.id];
