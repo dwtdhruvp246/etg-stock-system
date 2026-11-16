@@ -37,7 +37,7 @@ export async function signOut() {
 
 function checked(result) {
   if(result.error) {
-    if(['PGRST205','42P01'].includes(result.error.code)) throw Error('The ETG database setup is pending. Ask your administrator to apply the migration.');
+    if(['PGRST205','42P01'].includes(result.error.code)) throw Error('The stock database setup is pending. Ask your administrator to apply the migration.');
     if(result.status===401) throw new AccessError('Your session ended. Sign in again.');
     throw Error(result.error.message||'Supabase could not complete the request.');
   }
@@ -47,7 +47,7 @@ function checked(result) {
 export async function accessRole() {
   const data=checked(await client.from('etg_stock_users').select('access_role').maybeSingle());
   const role=data?.access_role;
-  if(role!=='full_access'&&role!=='view_only') throw new AccessError('This account has no ETG access. Ask your administrator to assign a role.');
+  if(role!=='full_access'&&role!=='view_only') throw new AccessError('This account has no access to the stock workspace. Ask your administrator to assign a role.');
   return role;
 }
 
