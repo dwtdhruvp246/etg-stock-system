@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#111d32">
+<meta name="description" content="ETG fertilizer stock and dispatch operations.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://btmmfwnpifugjjmjlvve.supabase.co; img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'">
+<title>ETG Stock &amp; Dispatch</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<main class="signin-shell" id="signin-shell">
+  <section class="signin-card">
+    <div class="signin-brand"><span class="brand-icon" data-icon="brand"></span><span>ETG Stock &amp; Dispatch</span></div>
+    <h1>Sign in</h1>
+    <p>Use the account provided by your administrator.</p>
+    <form id="signin-form">
+      <label class="field">Email<input name="email" type="email" autocomplete="username" required></label>
+      <label class="field">Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <p class="flash error" id="signin-status" role="status" hidden></p>
+      <button class="btn primary" type="submit">Sign in</button>
+    </form>
+  </section>
+</main>
+<div class="layout" id="app-shell" hidden>
+<aside class="sidebar" id="sidebar">
+  <a class="brand" href="#dashboard"><span class="brand-icon" data-icon="brand"></span><span><b>ETG Stock &amp; Dispatch</b><small>FERTILIZER OPERATIONS</small></span></a>
+  <div class="side-label">WORKSPACE</div>
+  <nav id="nav" aria-label="Main navigation"></nav>
+  <div class="side-bottom">
+    <div class="profile"><span class="avatar" id="profile-initials"></span><span class="profile-label"><strong id="profile-email"></strong><small id="profile-role"></small></span></div>
+    <button class="btn signout" type="button" id="signout">Sign out</button>
+  </div>
+</aside>
+<button class="side-shade" id="side-shade" aria-label="Close navigation" hidden></button>
+<div class="workspace">
+  <header class="topbar">
+    <div class="crumb"><button id="menu-toggle" class="icon-btn mobile-menu" aria-label="Open navigation" aria-expanded="false" data-icon="menu"></button><span class="crumb-root">Workspace</span><span class="crumb-chevron" data-icon="chevron-right"></span><span id="crumb-page"></span></div>
+    <div class="top-right"><span class="live off" id="connection"><span></span> Connecting</span><span class="top-date" id="top-date"></span></div>
+  </header>
+  <main id="main"></main>
+</div>
+</div>
+<dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="./vendor/supabase-2.119.0.js" defer></script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
