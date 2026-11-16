@@ -1,5 +1,7 @@
 # ETG Stock & Dispatch
 
+[Open Stock & Dispatch](https://dwtdhruvp246.github.io/etg-stock-system/)
+
 The static app in `dist/` uses Supabase Auth and the Supabase Data API. The database starts empty.
 
 ## Supabase setup
