@@ -185,7 +185,7 @@ function stockBody() {
   const state=view.stock, list=stockRows(state);
   const sortable=new Set(['code','sap','product','warehouse','balance','updatedAt']);
   const labels=[...stockCols.filter(([key])=>key!=='comment'),['actions','Actions']];
-  const heading=labels.map(([key,label])=>`<th ${key==='balance'?'class="t-number"':''} ${state.sort===key?`aria-sort="${state.dir===1?'ascending':'descending'}"`:''}>${sortable.has(key)?`<button type="button" class="sort" data-action="sort" ${safeId(key)}>${esc(label)} ${icon(state.sort===key?(state.dir===1?'up':'down'):'sort')}</button>`:esc(key==='status'?'Status / Comments':label)}</th>`).join('');
+  const heading=labels.map(([key,label])=>`<th ${key==='balance'?'class="t-number"':''} ${state.sort===key?`aria-sort="${state.dir===1?'ascending':'descending'}"`:''}>${sortable.has(key)?`<button type="button" class="sort" data-action="sort" ${safeId(key)}>${key==='balance'?'':esc(label)}${icon(state.sort===key?(state.dir===1?'up':'down'):'sort')}${key==='balance'?esc(label):''}</button>`:esc(key==='status'?'Status / Comments':label)}</th>`).join('');
   const rows=list.map(row=>{
     const historyData=`${safeId(row.code)} ${safeId(row.warehouse,'warehouse')}`;
     return `<tr ${safeId(row.id,'key')}><td>${link(row.code,'history',historyData)}</td><td>${esc(row.sap)}</td><td>${link(row.product,'history',historyData)}</td><td>${esc(row.pack)}</td><td>${esc(warehouseName(db,row.warehouse))}</td><td class="t-number"><strong>${fmt(row.balance)}</strong></td><td>${badge(stockStatus(row))}${row.comment?`<span class="sub">${esc(row.comment)}</span>`:''}</td><td>${dateTime(row.updatedAt)}</td><td>${esc(row.updatedBy)}</td><td><div class="row-actions">${iconButton('Edit stock item','edit','edit-stock',safeId(row.id))}${iconButton('View stock history','history','history',historyData)}</div></td></tr>`;
@@ -253,7 +253,7 @@ function warehouseDetail(id) {
     return `<section class="panel detail-panel"><h3>${label}</h3>${rows.length?rows.map(row=>`<div class="detail-row" ${safeId(row.id,'key')}><span>${link(row.id,'tx-detail',safeId(row.id))}<span class="sub">${esc(row.product)}</span></span><strong>${row.delta>0?'+':''}${fmt(row.delta)} MT</strong><span>${dayText(row.date)}</span></div>`).join(''):'<p class="sub">No matching movements.</p>'}</section>`;
   }).join('');
   return `<div id="warehouse-detail-heading">${pageHead(esc(wh.name),esc(wh.place),button('All Warehouses','chevron-left','go',{data:'data-id="warehouses"'})+directoryButton('warehouse',id)+button('View Stock','box','warehouse-stock',{data:safeId(id),primary:true}))}</div>`+
-  `<div id="warehouse-detail-data"><section class="panel report-panel">${panelHead('Current products',`${stock.length} records · ${fmt(total(stock))} MT on hand`)}<div class="table-wrap" tabindex="0" aria-label="Warehouse stock"><table class="report-table"><thead><tr><th>Material code</th><th>Product</th><th>Packaging</th><th>Balance</th><th>Status</th></tr></thead><tbody>${stock.map(row=>`<tr ${safeId(row.id,'key')}><td>${link(row.code,'history',safeId(row.code))}</td><td>${esc(row.product)}</td><td>${esc(row.pack)}</td><td>${fmt(row.balance)} MT</td><td>${badge(stockStatus(row))}</td></tr>`).join('')||empty(5,'No current products.')}</tbody></table></div></section><div class="warehouse-grid">${groupHtml}</div></div>`;
+  `<div id="warehouse-detail-data"><section class="panel report-panel">${panelHead('Current products',`${stock.length} records · ${fmt(total(stock))} MT on hand`)}<div class="table-wrap" tabindex="0" aria-label="Warehouse stock"><table class="report-table"><thead><tr><th>Material code</th><th>Product</th><th>Packaging</th><th class="t-number">Balance</th><th>Status</th></tr></thead><tbody>${stock.map(row=>`<tr ${safeId(row.id,'key')}><td>${link(row.code,'history',safeId(row.code))}</td><td>${esc(row.product)}</td><td>${esc(row.pack)}</td><td class="t-number">${fmt(row.balance)} MT</td><td>${badge(stockStatus(row))}</td></tr>`).join('')||empty(5,'No current products.')}</tbody></table></div></section><div class="warehouse-grid">${groupHtml}</div></div>`;
 }
 function warehousesPage() {
   return activeWarehouse?warehouseDetail(activeWarehouse):pageHead('Warehouses','Manage locations and review their stock and movements.',directoryButton('warehouse'))+`<div class="warehouse-grid" id="warehouse-cards">${warehouseCards()||'<section class="panel detail-panel">No warehouses yet.</section>'}</div>`;
@@ -577,6 +577,7 @@ const depotColumns=[
   ['product','Item'],['code','Material Code'],['pack','Packaging Type'],['quantity','Quantity'],
   ['mt','MT'],['average_sales','Average Sales (Daily)'],['system_stock','System Stock (QTY)'],['physical_stock','Physical Stock'],
 ];
+const depotNumericColumn=key=>['quantity','mt','average_sales','system_stock','physical_stock'].includes(key)?'t-number':'';
 const depotOrderNumber=order=>'DO-'+String(order.order_number).padStart(5,'0');
 
 function depotOrderRows() {
@@ -617,7 +618,7 @@ function depotOrdersPage() {
       ${filterSelect(scope,'Sort by','sort',sortChoices,filters.sort,'')}
       ${button('Clear filters',null,'depot-clear-filters')}
     </div>`+
-    `<div class="table-wrap" tabindex="0"><table><thead><tr><th>Order</th><th>Depot</th><th>Order date and time (CAT)</th><th>Placed by</th><th>Total tonnage</th><th>Status</th><th>Action</th></tr></thead><tbody id="depot-orders-body">${depotOrderRows()}</tbody></table></div>`;
+    `<div class="table-wrap" tabindex="0"><table><thead><tr><th>Order</th><th>Depot</th><th>Order date and time (CAT)</th><th>Placed by</th><th class="t-number">Total tonnage</th><th>Status</th><th>Action</th></tr></thead><tbody id="depot-orders-body">${depotOrderRows()}</tbody></table></div>`;
 }
 
 const depotOrderRow=()=>`<section class="depot-entry">
@@ -770,9 +771,9 @@ dialog.addEventListener('submit',async event=>{
 function depotOrderDocument(order) {
   return `<div class="depot-document"><h2>${esc(order.depot)} · ${depotOrderNumber(order)}</h2>
     <p>Placed by ${esc(order.submitted_by)} · ${esc(dateTime(order.created_at))} CAT · ${esc(depotStatusLabel(order.status))}</p>
-    <div class="table-wrap"><table><thead><tr>${depotColumns.map(([,label])=>`<th>${esc(label)}</th>`).join('')}</tr></thead>
-    <tbody>${order.lines.map(line=>`<tr>${depotColumns.map(([key])=>`<td>${esc(typeof line[key]==='number'?fmt(line[key]):line[key])}</td>`).join('')}</tr>`).join('')}</tbody>
-    <tfoot><tr><th colspan="7">Total tonnage</th><td>${fmt(order.total_mt)} MT</td></tr></tfoot></table></div></div>`;
+    <div class="table-wrap"><table><thead><tr>${depotColumns.map(([key,label])=>`<th class="${depotNumericColumn(key)}">${esc(label)}</th>`).join('')}</tr></thead>
+    <tbody>${order.lines.map(line=>`<tr>${depotColumns.map(([key])=>`<td class="${depotNumericColumn(key)}">${esc(typeof line[key]==='number'?fmt(line[key]):line[key])}</td>`).join('')}</tr>`).join('')}</tbody>
+    <tfoot><tr><th colspan="7">Total tonnage</th><td class="t-number">${fmt(order.total_mt)} MT</td></tr></tfoot></table></div></div>`;
 }
 function depotOrderDetail(id) {
   const order=orders.find(order=>order.id===id);
@@ -1139,13 +1140,13 @@ function showImportPreview(file,raw,lines) {
     `<div class="calc-grid">${counts.map(([label,value])=>`<div><span class="sub">${label}</span><b>${value}</b></div>`).join('')}</div>
     ${failed?`<p class="flash warn">${failed} ${failed===1?'row has':'rows have'} errors and will be skipped.</p>`:''}
     ${visible.length<lines.length?'<p class="sub">The preview shows up to 150 rows, prioritizing errors. Confirmation applies all valid rows.</p>':''}
-    <div class="table-wrap" tabindex="0" aria-label="Import preview"><table class="report-table"><thead><tr><th>Row</th><th>Material code</th><th>Product</th><th>Warehouse</th><th>Balance (MT)</th><th>Result</th></tr></thead><tbody>
-    ${visible.map(({line,errors,values,warehouseInput,existing,existingMaterial})=>`<tr><td>${line}</td><td>${esc(values.code)||'—'}</td><td>${esc(values.product)||'—'}</td><td>${esc(warehouseName(db,values.warehouse)||warehouseInput)||'—'}</td><td>${esc(values.balance)||'—'}</td><td>${errors.length?badge('Error','red')+`<span class="sub">${esc(errors.join(' · '))}</span>`:badge(existing?'Update stock':existingMaterial?'New warehouse balance':'New product',existing?'blue':'green')}</td></tr>`).join('')}
+    <div class="table-wrap" tabindex="0" aria-label="Import preview"><table class="report-table"><thead><tr><th class="t-number">Row</th><th>Material code</th><th>Product</th><th>Warehouse</th><th class="t-number">Balance (MT)</th><th>Result</th></tr></thead><tbody>
+    ${visible.map(({line,errors,values,warehouseInput,existing,existingMaterial})=>`<tr><td class="t-number">${line}</td><td>${esc(values.code)||'—'}</td><td>${esc(values.product)||'—'}</td><td>${esc(warehouseName(db,values.warehouse)||warehouseInput)||'—'}</td><td class="t-number">${esc(values.balance)||'—'}</td><td>${errors.length?badge('Error','red')+`<span class="sub">${esc(errors.join(' · '))}</span>`:badge(existing?'Update stock':existingMaterial?'New warehouse balance':'New product',existing?'blue':'green')}</td></tr>`).join('')}
     </tbody></table></div>${statusBox}`,button('Choose Another File',null,'import')+button(valid.length?`Import ${valid.length} Valid Rows`:'Record Failed Import','upload','confirm-import',{primary:!!valid.length}),true);
 }
 function importHistory() {
   openModal('Import History','Confirmed daily stock uploads and their outcomes.',
-    `<div class="table-wrap" tabindex="0" aria-label="Daily stock import history"><table class="report-table"><thead><tr><th>File name</th><th>Date and time</th><th>Uploaded by</th><th>Records</th><th>Successful</th><th>Failed</th><th>Status</th></tr></thead><tbody>${db.imports.map(row=>`<tr><td>${esc(row.file)}</td><td>${dateTime(row.at)}</td><td>${esc(row.user)}</td><td>${esc(row.total)}</td><td>${esc(row.success)}</td><td>${esc(row.failed)}</td><td>${badge(row.status,row.failed?(row.success?'amber':'red'):'green')}</td></tr>`).join('')||empty(7,'No daily stock uploads have been confirmed.')}</tbody></table></div>`,
+    `<div class="table-wrap" tabindex="0" aria-label="Daily stock import history"><table class="report-table"><thead><tr><th>File name</th><th>Date and time</th><th>Uploaded by</th><th class="t-number">Records</th><th class="t-number">Successful</th><th class="t-number">Failed</th><th>Status</th></tr></thead><tbody>${db.imports.map(row=>`<tr><td>${esc(row.file)}</td><td>${dateTime(row.at)}</td><td>${esc(row.user)}</td><td class="t-number">${esc(row.total)}</td><td class="t-number">${esc(row.success)}</td><td class="t-number">${esc(row.failed)}</td><td>${badge(row.status,row.failed?(row.success?'amber':'red'):'green')}</td></tr>`).join('')||empty(7,'No daily stock uploads have been confirmed.')}</tbody></table></div>`,
     button('Back to Upload',null,'import'),true);
 }
 async function confirmImport(target) {
