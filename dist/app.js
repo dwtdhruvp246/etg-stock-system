@@ -89,7 +89,8 @@ const movementTones={
 const movementTone=type=>Object.hasOwn(movementTones,type)?movementTones[type]:['box','grey'];
 const reportTypes=['Daily Stock Report','Current Stock Report','Warehouse Stock Report','Product Stock Report','Daily Dispatch Report','Daily Receipt Report','Stock Movement Report','Transaction Report','Low Stock Report','Out-of-Stock Report','Variance Report','Transporter Report','Client Dispatch Report','Stock Adjustment Report'];
 const initialFilters=()=>({search:'',warehouse:'',product:'',pack:'',status:'',min:'',max:'',updated:'',sort:'code',dir:1,expanded:false});
-const view={stock:initialFilters(),transactions:{search:'',type:'',warehouse:'',page:1,size:25},reports:{type:'Current Stock Report',start:'',end:'',warehouse:'',product:'',code:'',transporter:'',client:'',movement:'',status:'',page:1,size:25}};
+const depotFilters=()=>({search:'',depot:'',status:'',start:'',end:'',sort:'newest'});
+const view={depotOrders:depotFilters(),stock:initialFilters(),transactions:{search:'',type:'',warehouse:'',page:1,size:25},reports:{type:'Current Stock Report',start:'',end:'',warehouse:'',product:'',code:'',transporter:'',client:'',movement:'',status:'',page:1,size:25}};
 const main=document.getElementById('main');
 const nav=document.getElementById('nav');
 const dialog=document.getElementById('dialog');
@@ -408,7 +409,11 @@ function syncOptions(el,choices,value,placeholder) {
 }
 function refreshParts() {
   if(!role) return;
-  if(route==='depot-orders') return;
+  if(route==='depot-orders') {
+    document.getElementById('depot-orders-body').innerHTML=depotOrderRows();
+    refreshOptions('depotOrders','depot',unique(orders.map(order=>order.depot)),view.depotOrders.depot);
+    return;
+  }
   if(route==='stock'||route==='transactions'||route==='reports') {
     const id=route+'-body';
     const next=fragment(`<div id="${id}">${{stock:stockBody,transactions:txBody,reports:reportBody}[route]()}</div>`).firstElementChild;
@@ -575,14 +580,43 @@ const depotColumns=[
 const depotOrderNumber=order=>'DO-'+String(order.order_number).padStart(5,'0');
 
 function depotOrderRows() {
-  return orders.map(order=>`<tr><td>${link(depotOrderNumber(order),'depot-detail',safeId(order.id))}</td>
+  const {search,depot,status,start,end,sort}=view.depotOrders;
+  const matching=orders.filter(order=>{
+    const day=getDay(order.created_at);
+    return (!depot||order.depot===depot)&&(!status||order.status===status)
+      &&(!start||day>=start)&&(!end||day<=end)
+      &&(!search.trim()||[depotOrderNumber(order),order.depot,order.submitted_by,
+        ...order.lines.flatMap(line=>[line.code,line.product])].some(value=>match(value,search)));
+  });
+  const newest=(a,b)=>new Date(b.created_at)-new Date(a.created_at)||b.order_number-a.order_number;
+  const sorters={
+    newest,oldest:(a,b)=>newest(b,a),
+    depot:(a,b)=>a.depot.localeCompare(b.depot)||newest(a,b),
+    heaviest:(a,b)=>b.total_mt-a.total_mt||newest(a,b),
+    lightest:(a,b)=>a.total_mt-b.total_mt||newest(a,b),
+  };
+  matching.sort(sorters[sort]||newest);
+  return matching.map(order=>`<tr><td>${link(depotOrderNumber(order),'depot-detail',safeId(order.id))}</td>
     <td>${esc(order.depot)}</td><td>${esc(dateTime(order.created_at))}</td><td>${esc(order.submitted_by)}</td>
-    <td class="t-number">${fmt(order.total_mt)} MT</td><td>${depotStatusBadge(order.status)}</td><td>${button('View',null,'depot-detail',{data:safeId(order.id)})}</td></tr>`).join('')||empty(7,'No depot orders have been placed yet.');
+    <td class="t-number">${fmt(order.total_mt)} MT</td><td>${depotStatusBadge(order.status)}</td><td>${button('View',null,'depot-detail',{data:safeId(order.id)})}</td></tr>`).join('')||empty(7,orders.length?'No orders match your search or filters.':'No depot orders have been placed yet.');
 }
 
 function depotOrdersPage() {
+  const filters=view.depotOrders;
+  const scope='depotOrders';
+  const sortChoices=[['newest','Newest first'],['oldest','Oldest first'],['depot','Depot A–Z'],
+    ['heaviest','Highest tonnage'],['lightest','Lowest tonnage']];
   return pageHead('Depot Orders',assignedDepot?esc(assignedDepot)+' · Your order history':'Orders submitted by depot supervisors.',
     canPlaceDepotOrder()?button('New Depot Order','plus','depot-new',{primary:true}):'')+
+    `<div class="toolbar">
+      ${searchBox(scope,'Search orders, depots, submitters or items',filters.search)}
+      ${assignedDepot?'':filterSelect(scope,'Depot','depot',unique(orders.map(order=>order.depot)),filters.depot)}
+      ${filterSelect(scope,'Status','status',depotStatuses,filters.status)}
+      ${filterInput(scope,'From','start',filters.start,'date')}
+      ${filterInput(scope,'To','end',filters.end,'date')}
+      ${filterSelect(scope,'Sort by','sort',sortChoices,filters.sort,'')}
+      ${button('Clear filters',null,'depot-clear-filters')}
+    </div>`+
     `<div class="table-wrap" tabindex="0"><table><thead><tr><th>Order</th><th>Depot</th><th>Order date and time (CAT)</th><th>Placed by</th><th>Total tonnage</th><th>Status</th><th>Action</th></tr></thead><tbody id="depot-orders-body">${depotOrderRows()}</tbody></table></div>`;
 }
 
@@ -1261,6 +1295,7 @@ const actions={
   'archive-ask':target=>archivePrompt(target.dataset.id),
   archived:archivedStock,
   'new-tx':()=>txEditor(),
+  'depot-clear-filters':()=>{view.depotOrders=depotFilters();render(true);},
   'depot-new':()=>void depotOrderEditor(),
   'depot-edit':target=>{
     const order=orders.find(item=>item.id===target.dataset.id);
@@ -1329,6 +1364,7 @@ function updateProfile() {
 }
 
 function clearWorkspace(message='') {
+  view.depotOrders=depotFilters();
   workspaceGeneration++;
   role='';
   assignedDepot=''; orders=[]; catalog=[]; depotOrderRequest='';
@@ -1396,8 +1432,7 @@ async function synchronize() {
     if(generation!==workspaceGeneration) return;
     if(history) {
       orders=history;
-      const body=document.getElementById('depot-orders-body');
-      if(body) body.innerHTML=depotOrderRows();
+      if(route==='depot-orders') refreshParts();
     }
     if(latest) displayStockUpdate(latest);
     connected=true;
