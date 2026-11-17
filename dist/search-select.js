@@ -7,20 +7,34 @@ function targetSelect(event) {
 
 function close(restoreFocus=false) {
   if(!active) return;
-  const {select,panel,observer}=active;
+  const {select,panel,observer,inline,cleanup}=active;
   active=null;
   observer.disconnect();
+  cleanup();
   panel.remove();
-  if(restoreFocus&&select.isConnected) select.focus({preventScroll:true});
+  if(inline) {
+    inline.value=select.value?select.selectedOptions[0]?.text||'':'';
+    inline.setAttribute('aria-expanded','false');
+    inline.removeAttribute('aria-activedescendant');
+    inline.removeAttribute('aria-controls');
+  }
+  const control=inline||select;
+  if(restoreFocus&&control.isConnected&&control!==document.activeElement) control.focus({preventScroll:true});
 }
 
-function open(select,query='') {
+function open(select,query='',inline=null) {
   if(active?.select===select) return;
   close();
   const panel=document.createElement('div');
   panel.className='select-search-panel';
   panel.innerHTML='<input type="search" class="select-search-input" role="combobox" autocomplete="off" aria-autocomplete="list" aria-expanded="true" aria-controls="select-search-options" aria-label="Search options" placeholder="Search options…"><div class="select-search-options" id="select-search-options" role="listbox" aria-label="Matching options"></div>';
-  const search=panel.querySelector('input');
+  const popupInput=panel.querySelector('input');
+  const search=inline||popupInput;
+  if(inline) {
+    popupInput.remove();
+    inline.setAttribute('aria-expanded','true');
+    inline.setAttribute('aria-controls','select-search-options');
+  }
   const label=select.getAttribute('aria-label')||[...(select.labels||[])].map(label=>
     [...label.childNodes].filter(node=>node.nodeType===Node.TEXT_NODE).map(node=>node.textContent).join('').trim()
   ).filter(Boolean).join(' ');
@@ -28,8 +42,9 @@ function open(select,query='') {
   const list=panel.querySelector('[role="listbox"]');
   let choices=[], index=-1;
   const position=()=>{
-    if(!select.isConnected||!select.getClientRects().length) return close();
-    const rect=select.getBoundingClientRect();
+    const anchor=inline||select;
+    if(!anchor.isConnected||!anchor.getClientRects().length) return close();
+    const rect=anchor.getBoundingClientRect();
     const roomBelow=window.innerHeight-rect.bottom;
     const above=roomBelow<240&&rect.top>roomBelow;
     const width=Math.min(Math.max(rect.width,240),window.innerWidth-16);
@@ -51,7 +66,7 @@ function open(select,query='') {
   const refresh=()=>{
     const terms=normalize(search.value).trim().split(/\s+/).filter(Boolean);
     choices=[...select.options].filter(option=>!option.disabled&&!option.parentElement.disabled&&
-      !(select.required&&!option.value)&&terms.every(term=>normalize(option.text+' '+option.value).includes(term)));
+      !(select.required&&!option.value)&&terms.every(term=>normalize(inline?option.text:option.text+' '+option.value).includes(term)));
     list.replaceChildren();
     search.removeAttribute('aria-activedescendant');
     index=-1;
@@ -81,15 +96,17 @@ function open(select,query='') {
     if(changed) select.dispatchEvent(new Event('change',{bubbles:true}));
   };
   const observer=new MutationObserver(()=>{if(select.disabled)close();else refresh();});
-  active={select,panel,observer,position};
+  active={select,panel,observer,position,inline,refresh,cleanup:()=>search.removeEventListener('keydown',onKey)};
   (select.closest('dialog')||document.body).append(panel);
   observer.observe(select,{childList:true,subtree:true,attributes:true,characterData:true});
   position();
   if(!panel.isConnected) return;
+  const confirmed=inline&&select.value?select.selectedOptions[0]?.text||'':'';
   search.value=query;
   refresh();
-  search.addEventListener('input',refresh);
-  search.addEventListener('keydown',event=>{
+  if(confirmed&&!query) search.value=confirmed;
+  if(!inline) search.addEventListener('input',refresh);
+  function onKey(event) {
     if(event.key==='Tab') { close(true); return; }
     if(!['Escape','Enter','ArrowDown','ArrowUp'].includes(event.key)) return;
     event.preventDefault();
@@ -97,7 +114,8 @@ function open(select,query='') {
     if(event.key==='Escape') close(true);
     else if(event.key==='Enter') choose(choices[index]);
     else if(choices.length) highlight((index+(event.key==='ArrowDown'?1:-1)+choices.length)%choices.length,true);
-  });
+  }
+  search.addEventListener('keydown',onKey);
   list.addEventListener('pointerdown',event=>event.preventDefault());
   list.addEventListener('click',event=>{
     const option=event.target.closest('[role="option"]');
@@ -112,7 +130,7 @@ document.addEventListener('pointerdown',event=>{
     // Cancel the native popup and let the click open the searchable one.
     event.preventDefault();
   }
-  if(active&&!active.panel.contains(event.target)&&active.select!==select) close();
+  if(active&&!active.panel.contains(event.target)&&active.select!==select&&active.inline!==event.target) close();
 },true);
 document.addEventListener('click',event=>{
   const select=targetSelect(event);
@@ -129,7 +147,7 @@ document.addEventListener('keydown',event=>{
   open(select,event.key.length===1&&event.key!==' '?event.key:'');
 },true);
 document.addEventListener('focusin',event=>{
-  if(active&&!active.panel.contains(event.target)&&event.target!==active.select) close();
+  if(active&&!active.panel.contains(event.target)&&event.target!==active.select&&event.target!==active.inline) close();
 });
 document.addEventListener('close',event=>{
   if(active&&event.target.contains(active.select)) close();
@@ -138,3 +156,24 @@ window.addEventListener('resize',()=>active?.position());
 document.addEventListener('scroll',event=>{
   if(active&&!active.panel.contains(event.target)) active.position();
 },true);
+
+
+export function bindInlineSelect(search,select) {
+  const start=()=>{
+    if(active?.inline!==search) open(select,'',search);
+  };
+  search.addEventListener('focus',()=>{
+    start();
+    if(select.value) search.select();
+  });
+  search.addEventListener('click',start);
+  search.addEventListener('input',()=>{
+    const query=search.value;
+    if(select.value) {
+      select.value='';
+      select.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+    if(active?.inline===search) active.refresh();
+    else open(select,query,search);
+  });
+}

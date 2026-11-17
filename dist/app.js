@@ -1,4 +1,4 @@
-import './search-select.js';
+import {bindInlineSelect} from './search-select.js';
 import {zone,operator,warehouseName,partyName,directoryKinds,statuses,movements,cols,docFields,stockCols,today,stamp,round,numeric,nonNegative,isLow,isOut,stockStatus,records,stockAt,isTransfer,isRepacking,isProductionBatch,matchesMovement,canMoveBulk,canOpenStock,packageKg,repackWeight,calculate,varianceTone,saveStock,saveTransaction,saveDirectoryEntry,archiveDirectoryEntry,updateTransactionDetails,voidTransaction,audit,uid,setOperator,emptyStockState} from './model.js';
 import {AccessError,account,restoreSession,signIn,signOut,accessRole,fetchStock,writeStock,depotAssignment,fetchDepotCatalog,fetchDepotOrders,submitDepotOrder} from './backend.js';
 import {readTable,makeCsv,makeSheet,makePdf,download} from './files.js';
@@ -580,7 +580,8 @@ function depotOrdersPage() {
 
 const depotOrderRow=()=>`<section class="depot-entry">
   <div class="form-grid three">
-    ${field('Item',select('item',catalog.map((item,index)=>[index,`${item.product} · ${item.code} · ${item.pack}`]),'','Select item','required'))}
+    ${field('Item',input('','','search','data-depot-item-search role="combobox" aria-autocomplete="list" aria-expanded="false" placeholder="Type item name or material code" autocomplete="off"')+
+      select('item',catalog.map((item,index)=>[index,`${item.product} · ${item.code} · ${item.pack}`]),'','Select item','hidden'))}
     ${field('Material Code',input('code','','text','readonly'))}
     ${field('Packaging Type',input('pack','','text','readonly'))}
     ${field('Quantity',input('quantity','','number','required min="0.001" step="0.001" max="1000000000"'))}
@@ -613,10 +614,19 @@ async function depotOrderEditor() {
       <button type="button" class="btn" data-depot-row="add">Add item</button>
       <p class="depot-total">Total tonnage <strong id="depot-total">0.00 MT</strong></p>${statusBox}
     </form>`,modalButtons('Place Order','depot-order-form'),true);
-    dialog.querySelector('[name="item"]').value='';
+    setupDepotItemSearch(dialog.querySelector('.depot-entry'));
   } catch(error) {
     if(itemRequest.isConnected) itemRequest.textContent=error.message;
   }
+}
+
+function setupDepotItemSearch(row) {
+  const select=row.querySelector('[name="item"]');
+  const search=row.querySelector('[data-depot-item-search]');
+  select.value='';
+  search.removeAttribute('name');
+  bindInlineSelect(search,select);
+  return search;
 }
 
 function updateDepotTotal(changed) {
@@ -645,15 +655,14 @@ dialog.addEventListener('click',event=>{
   if(!assignedDepot||!button||!list) return;
   if(button.dataset.depotRow==='add'&&list.children.length<100) {
     list.insertAdjacentHTML('beforeend',depotOrderRow());
-    list.lastElementChild.querySelector('[name="item"]').value='';
-    list.lastElementChild.querySelector('[name="item"]').focus();
+    setupDepotItemSearch(list.lastElementChild).focus();
   } else if(button.dataset.depotRow==='remove'&&list.children.length>1) {
     button.closest('.depot-entry').remove();
   }
   updateDepotTotal();
 });
 for(const type of ['input','change']) dialog.addEventListener(type,event=>{
-  if(event.target.form?.id==='depot-order-form') updateDepotTotal(event.target);
+  if(event.target.form?.id==='depot-order-form'&&!event.target.hasAttribute('data-depot-item-search')) updateDepotTotal(event.target);
 });
 
 dialog.addEventListener('submit',async event=>{
