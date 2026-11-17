@@ -51,7 +51,7 @@ const iconButton=(label,name,action,data='')=>!allowedAction(action)?'':`<button
 const link=(label,action,data='')=>`<button type="button" class="link" data-action="${action}" ${data}>${esc(label)}</button>`;
 const pageHead=(title,description,actions='')=>`<div class="page-head"><div><h1>${title}</h1><p>${description}</p></div>${actions?`<div class="heading-tools">${actions}</div>`:''}</div>`;
 const panelHead=(title,subtitle,action='')=>`<div class="panel-head"><div><h2>${title}</h2>${subtitle?`<p>${subtitle}</p>`:''}</div>${action}</div>`;
-const badge=(label,tone=statuses[label]||'grey')=>`<span class="badge tone-${tone}">${esc(label)}</span>`;
+const badge=(label,tone=statuses[label])=>`<span class="badge tone-${typeof tone==='string'&&/^[a-z]+$/.test(tone)?tone:'grey'}">${esc(label)}</span>`;
 const empty=(length,text)=>`<tr><td class="empty" colspan="${length}">${esc(text)}</td></tr>`;
 const field=(label,control,hint='')=>`<label class="field">${esc(label)}${control}${hint?`<small>${esc(hint)}</small>`:''}</label>`;
 const input=(name,value='',type='text',attributes='')=>`<input name="${name}" type="${type}" value="${esc(value)}" ${attributes}>`;
@@ -69,11 +69,12 @@ const pageList=[
   ['dashboard','Dashboard','dashboard'],['stock','Stock Management','box'],['transactions','Transactions','swap'],
   ['warehouses','Warehouses','warehouse'],['contacts','Contacts','contacts'],['reports','Reports','report'],
 ];
-const movementTone=type=>({
+const movementTones={
   'Stock Received':['inbound','green'],'Dispatch':['outbound','blue'],'Production':['layers','purple'],
   'Transfer Out':['swap','teal'],'Transfer In':['swap','teal'],'Return':['inbound','green'],
   'Stock Adjustment':['edit','amber'],'Damaged Stock':['alert','red'],'Stock Count Correction':['edit','amber'],
-})[type]||['box','grey'];
+};
+const movementTone=type=>Object.hasOwn(movementTones,type)?movementTones[type]:['box','grey'];
 const reportTypes=['Daily Stock Report','Current Stock Report','Warehouse Stock Report','Product Stock Report','Daily Dispatch Report','Daily Receipt Report','Stock Movement Report','Transaction Report','Low Stock Report','Out-of-Stock Report','Variance Report','Transporter Report','Client Dispatch Report','Stock Adjustment Report'];
 const initialFilters=()=>({search:'',warehouse:'',product:'',pack:'',status:'',min:'',max:'',updated:'',sort:'code',dir:1,expanded:false});
 const view={stock:initialFilters(),transactions:{search:'',type:'',warehouse:'',page:1,size:25},reports:{type:'Current Stock Report',start:'',end:'',warehouse:'',product:'',code:'',transporter:'',client:'',movement:'',status:'',page:1,size:25}};
@@ -132,11 +133,11 @@ function dashboard() {
   const activities=latest.map(row=>{
     const [glyph,tone]=movementTone(row.action);
     const delta=Number(row.delta||0);
-    return `<tr data-key="${row.id}"><td><strong>${esc(dayText(row.at,{day:'numeric',month:'short'}))}</strong><span class="sub">${timeText(row.at)}</span></td><td><div class="activity-name"><span class="activity-icon tone-${tone}">${icon(glyph)}</span><span><strong>${esc(row.action)}</strong><span class="sub">${esc(row.reason||row.movement||'Warehouse balance changed')}</span></span></div></td><td><strong>${esc(row.product)}</strong><span class="sub">${esc(warehouseName(db,row.warehouse))}</span></td><td class="t-number ${delta>0?'positive':delta<0?'negative':''}"><strong>${delta>0?'+':delta<0?'−':''}${fmt(Math.abs(delta))} MT</strong></td><td>${esc(row.user)}</td></tr>`;
+    return `<tr ${safeId(row.id,'key')}><td><strong>${esc(dayText(row.at,{day:'numeric',month:'short'}))}</strong><span class="sub">${timeText(row.at)}</span></td><td><div class="activity-name"><span class="activity-icon tone-${tone}">${icon(glyph)}</span><span><strong>${esc(row.action)}</strong><span class="sub">${esc(row.reason||row.movement||'Warehouse balance changed')}</span></span></div></td><td><strong>${esc(row.product)}</strong><span class="sub">${esc(warehouseName(db,row.warehouse))}</span></td><td class="t-number ${delta>0?'positive':delta<0?'negative':''}"><strong>${delta>0?'+':delta<0?'−':''}${fmt(Math.abs(delta))} MT</strong></td><td>${esc(row.user)}</td></tr>`;
   }).join('');
   const byWarehouse=sortedDirectory('warehouse').map(wh=>({...wh,balance:total(active.filter(row=>row.warehouse===wh.id))})).sort((a,b)=>b.balance-a.balance);
   const max=Math.max(...byWarehouse.map(wh=>wh.balance),1);
-  const bars=byWarehouse.map(wh=>`<button type="button" class="warehouse-bar" data-action="warehouse-stock" ${safeId(wh.id)} data-key="${wh.id}"><span class="bar-label"><strong>${esc(wh.name)}</strong><span>${fmt(wh.balance)} MT</span></span><span class="bar-track" style="display:block"><span class="bar-fill" style="width:${Math.max(0,wh.balance/max*100)}%;--fill:${wh.color}"></span></span></button>`).join('');
+  const bars=byWarehouse.map(wh=>`<button type="button" class="warehouse-bar" data-action="warehouse-stock" ${safeId(wh.id)} ${safeId(wh.id,'key')}><span class="bar-label"><strong>${esc(wh.name)}</strong><span>${fmt(wh.balance)} MT</span></span><span class="bar-track" style="display:block"><span class="bar-fill" style="width:${Math.max(0,wh.balance/max*100)}%;--fill:${/^#[0-9a-f]{6}$/i.test(wh.color)?wh.color:'#2c63ed'}"></span></span></button>`).join('');
   return pageHead('Dashboard','Track fertilizer stock, warehouse balances and daily movements.',button('Import Stock','upload','import')+button('New Transaction','plus','new-tx',{primary:true}))+ 
   `<div class="section-label"><h2>Inventory overview</h2><span>All warehouses · Metric tonnes</span></div><section class="metrics" id="metrics">${cards}</section>
   <div class="dash-lower"><section class="panel">${panelHead('Recent activity','Latest stock movements and adjustments',link('View transactions','go','data-id="transactions"'))}
@@ -174,7 +175,7 @@ function stockBody() {
   const heading=labels.map(([key,label])=>`<th ${key==='balance'?'class="t-number"':''} ${state.sort===key?`aria-sort="${state.dir===1?'ascending':'descending'}"`:''}>${sortable.has(key)?`<button type="button" class="sort" data-action="sort" ${safeId(key)}>${esc(label)} ${icon(state.sort===key?(state.dir===1?'up':'down'):'sort')}</button>`:esc(key==='status'?'Status / Comments':label)}</th>`).join('');
   const rows=list.map(row=>{
     const historyData=`${safeId(row.code)} ${safeId(row.warehouse,'warehouse')}`;
-    return `<tr data-key="${row.id}"><td>${link(row.code,'history',historyData)}</td><td>${esc(row.sap)}</td><td>${link(row.product,'history',historyData)}</td><td>${esc(row.pack)}</td><td>${esc(warehouseName(db,row.warehouse))}</td><td class="t-number"><strong>${fmt(row.balance)}</strong></td><td>${badge(stockStatus(row))}${row.comment?`<span class="sub">${esc(row.comment)}</span>`:''}</td><td>${dateTime(row.updatedAt)}</td><td>${esc(row.updatedBy)}</td><td><div class="row-actions">${iconButton('Edit stock item','edit','edit-stock',safeId(row.id))}${iconButton('View stock history','history','history',historyData)}</div></td></tr>`;
+    return `<tr ${safeId(row.id,'key')}><td>${link(row.code,'history',historyData)}</td><td>${esc(row.sap)}</td><td>${link(row.product,'history',historyData)}</td><td>${esc(row.pack)}</td><td>${esc(warehouseName(db,row.warehouse))}</td><td class="t-number"><strong>${fmt(row.balance)}</strong></td><td>${badge(stockStatus(row))}${row.comment?`<span class="sub">${esc(row.comment)}</span>`:''}</td><td>${dateTime(row.updatedAt)}</td><td>${esc(row.updatedBy)}</td><td><div class="row-actions">${iconButton('Edit stock item','edit','edit-stock',safeId(row.id))}${iconButton('View stock history','history','history',historyData)}</div></td></tr>`;
   }).join('');
   return `<div class="table-wrap" tabindex="0" aria-label="Stock records"><table class="stock-table"><thead><tr>${heading}</tr></thead><tbody>${rows||empty(10,'No stock records match your filters.')}</tbody></table></div><div class="table-foot" data-key="stock-count">${count.format(list.length)} ${list.length===1?'record':'records'}</div>`;
 }
@@ -212,7 +213,7 @@ function cellText(key,row) {
 }
 function txBody() {
   const state=view.transactions, all=txRows(), foot=pager('transactions',state,all.length);
-  const rows=slice(all,state).map(tx=>`<tr data-key="${tx.id}">${cols.map(([key])=>`<td class="${decimalCols.has(key)||key==='bags'?'t-number':''}">${key==='date'?link(dayText(tx.date),'tx-detail',safeId(tx.id)):key==='status'?badge(tx.status,tx.status==='Voided'?'grey':'green'):key==='variance'&&tx.variance!==null?badge(fmt(tx.variance),varianceTone(db,tx.variance)):cellText(key,tx)}</td>`).join('')}</tr>`).join('');
+  const rows=slice(all,state).map(tx=>`<tr ${safeId(tx.id,'key')}>${cols.map(([key])=>`<td class="${decimalCols.has(key)||key==='bags'?'t-number':''}">${key==='date'?link(dayText(tx.date),'tx-detail',safeId(tx.id)):key==='status'?badge(tx.status,tx.status==='Voided'?'grey':'green'):key==='variance'&&tx.variance!==null?badge(fmt(tx.variance),varianceTone(db,tx.variance)):cellText(key,tx)}</td>`).join('')}</tr>`).join('');
   return `<div class="table-wrap" tabindex="0" aria-label="Transaction register"><table class="transactions-table"><thead><tr>${cols.map(([key,label])=>`<th class="${decimalCols.has(key)||key==='bags'?'t-number':''}">${esc(label)}</th>`).join('')}</tr></thead><tbody>${rows||empty(cols.length,'No transactions match your filters.')}</tbody></table></div>${foot}`;
 }
 function transactionsPage() {
@@ -225,7 +226,7 @@ function warehouseCards() {
   return sortedDirectory('warehouse').map(wh=>{
     const list=records(db).filter(row=>row.warehouse===wh.id);
     const last=list.reduce((at,row)=>Date.parse(row.updatedAt)>(Date.parse(at)||0)?row.updatedAt:at,wh.updatedAt);
-    return `<article class="warehouse-card" data-key="${wh.id}"><span class="metric-icon tone-blue">${icon('warehouse')}</span><h2>${link(wh.name,'warehouse-stock',safeId(wh.id))}</h2>${wh.place?`<span class="sub">${esc(wh.place)}</span>`:''}<div class="warehouse-total">${fmt(total(list))} <small>MT on hand</small></div><div class="wh-meta"><div><b>${list.length}</b><span>Products</span></div><div><b>${list.filter(isLow).length}</b><span>Low stock</span></div><div><b>${list.filter(isOut).length}</b><span>Out of stock</span></div></div><p class="sub">Last update · ${dateTime(last)}</p><div class="toolbar warehouse-actions">${button('View Stock','box','warehouse-stock',{data:safeId(wh.id),primary:true})}${button('Warehouse Details',null,'warehouse-detail',{data:safeId(wh.id)})}${directoryButton('warehouse',wh.id)}</div></article>`;
+    return `<article class="warehouse-card" ${safeId(wh.id,'key')}><span class="metric-icon tone-blue">${icon('warehouse')}</span><h2>${link(wh.name,'warehouse-stock',safeId(wh.id))}</h2>${wh.place?`<span class="sub">${esc(wh.place)}</span>`:''}<div class="warehouse-total">${fmt(total(list))} <small>MT on hand</small></div><div class="wh-meta"><div><b>${list.length}</b><span>Products</span></div><div><b>${list.filter(isLow).length}</b><span>Low stock</span></div><div><b>${list.filter(isOut).length}</b><span>Out of stock</span></div></div><p class="sub">Last update · ${dateTime(last)}</p><div class="toolbar warehouse-actions">${button('View Stock','box','warehouse-stock',{data:safeId(wh.id),primary:true})}${button('Warehouse Details',null,'warehouse-detail',{data:safeId(wh.id)})}${directoryButton('warehouse',wh.id)}</div></article>`;
   }).join('');
 }
 function warehouseDetail(id) {
@@ -235,10 +236,10 @@ function warehouseDetail(id) {
   const groups=[['Recent receipts',['Stock Received','Return','Production']],['Recent dispatches',['Dispatch']],['Transfers in',['Transfer In']],['Transfers out',['Transfer Out']],['Stock adjustments',['Stock Adjustment','Stock Count Correction','Damaged Stock']]];
   const groupHtml=groups.map(([label,types])=>{
     const rows=tx.filter(row=>row.status==='Completed'&&types.includes(row.type)).slice(0,10);
-    return `<section class="panel detail-panel"><h3>${label}</h3>${rows.length?rows.map(row=>`<div class="detail-row" data-key="${row.id}"><span>${link(row.id,'tx-detail',safeId(row.id))}<span class="sub">${esc(row.product)}</span></span><strong>${row.delta>0?'+':''}${fmt(row.delta)} MT</strong><span>${dayText(row.date)}</span></div>`).join(''):'<p class="sub">No matching movements.</p>'}</section>`;
+    return `<section class="panel detail-panel"><h3>${label}</h3>${rows.length?rows.map(row=>`<div class="detail-row" ${safeId(row.id,'key')}><span>${link(row.id,'tx-detail',safeId(row.id))}<span class="sub">${esc(row.product)}</span></span><strong>${row.delta>0?'+':''}${fmt(row.delta)} MT</strong><span>${dayText(row.date)}</span></div>`).join(''):'<p class="sub">No matching movements.</p>'}</section>`;
   }).join('');
   return `<div id="warehouse-detail-heading">${pageHead(esc(wh.name),esc(wh.place),button('All Warehouses','chevron-left','go',{data:'data-id="warehouses"'})+directoryButton('warehouse',id)+button('View Stock','box','warehouse-stock',{data:safeId(id),primary:true}))}</div>`+
-  `<div id="warehouse-detail-data"><section class="panel report-panel">${panelHead('Current products',`${stock.length} records · ${fmt(total(stock))} MT on hand`)}<div class="table-wrap" tabindex="0" aria-label="Warehouse stock"><table class="report-table"><thead><tr><th>Material code</th><th>Product</th><th>Packaging</th><th>Balance</th><th>Status</th></tr></thead><tbody>${stock.map(row=>`<tr data-key="${row.id}"><td>${link(row.code,'history',safeId(row.code))}</td><td>${esc(row.product)}</td><td>${esc(row.pack)}</td><td>${fmt(row.balance)} MT</td><td>${badge(stockStatus(row))}</td></tr>`).join('')||empty(5,'No current products.')}</tbody></table></div></section><div class="warehouse-grid">${groupHtml}</div></div>`;
+  `<div id="warehouse-detail-data"><section class="panel report-panel">${panelHead('Current products',`${stock.length} records · ${fmt(total(stock))} MT on hand`)}<div class="table-wrap" tabindex="0" aria-label="Warehouse stock"><table class="report-table"><thead><tr><th>Material code</th><th>Product</th><th>Packaging</th><th>Balance</th><th>Status</th></tr></thead><tbody>${stock.map(row=>`<tr ${safeId(row.id,'key')}><td>${link(row.code,'history',safeId(row.code))}</td><td>${esc(row.product)}</td><td>${esc(row.pack)}</td><td>${fmt(row.balance)} MT</td><td>${badge(stockStatus(row))}</td></tr>`).join('')||empty(5,'No current products.')}</tbody></table></div></section><div class="warehouse-grid">${groupHtml}</div></div>`;
 }
 function warehousesPage() {
   return activeWarehouse?warehouseDetail(activeWarehouse):pageHead('Warehouses','Manage locations and review their stock and movements.',directoryButton('warehouse'))+`<div class="warehouse-grid" id="warehouse-cards">${warehouseCards()||'<section class="panel detail-panel">No warehouses yet.</section>'}</div>`;
@@ -250,7 +251,7 @@ function directoryButton(kind,id) {
 function contactsPage() {
   const panels=['transporter','client'].map(kind=>{
     const label=directoryKinds[kind];
-    const rows=sortedDirectory(kind).map(entry=>`<tr data-key="${entry.id}"><td><strong>${esc(entry.name)}</strong></td><td class="contact-action">${directoryButton(kind,entry.id)}</td></tr>`).join('');
+    const rows=sortedDirectory(kind).map(entry=>`<tr ${safeId(entry.id,'key')}><td><strong>${esc(entry.name)}</strong></td><td class="contact-action">${directoryButton(kind,entry.id)}</td></tr>`).join('');
     return `<section class="panel" data-key="${kind}">${panelHead(label+'s','',directoryButton(kind))}<table class="contacts-table"><thead><tr><th scope="col">Name</th><th scope="col" class="contact-action">Action</th></tr></thead><tbody>${rows||empty(2,`No ${kind}s have been added.`)}</tbody></table></section>`;
   }).join('');
   return pageHead('Contacts','Manage the transporters and clients available on transactions.')+`<div class="warehouse-grid contacts-grid" id="contact-directories">${panels}</div>`;
@@ -305,7 +306,7 @@ function reportBody() {
   const s=view.reports,{columns,rows,stock,warning}=reportData();
   const foot=pager('reports',s,rows.length), items=slice(rows,s);
   const numericKey=new Set([...decimalCols,'delta','bags']);
-  return `${warning?`<div class="flash warn">${esc(warning)}</div>`:''}<div class="table-wrap" tabindex="0" aria-label="Filtered report results"><table class="${columns.length>20?'transactions-table':'report-table'}"><thead><tr>${columns.map(([key,label])=>`<th class="${numericKey.has(key)?'t-number':''}">${esc(label)}</th>`).join('')}</tr></thead><tbody>${items.map(row=>`<tr data-key="${row.id}">${columns.map(([key])=>`<td class="${numericKey.has(key)?'t-number':''}">${key==='status'?badge(row.status,stock?statuses[row.status]:row.status==='Voided'?'grey':'green'):key==='variance'&&row.variance!==null?badge(fmt(row.variance),varianceTone(db,row.variance)):key==='asOf'?dayText(row.asOf):cellText(key,row)}</td>`).join('')}</tr>`).join('')||empty(columns.length,'No records match this report and its filters.')}</tbody></table></div>${foot}`;
+  return `${warning?`<div class="flash warn">${esc(warning)}</div>`:''}<div class="table-wrap" tabindex="0" aria-label="Filtered report results"><table class="${columns.length>20?'transactions-table':'report-table'}"><thead><tr>${columns.map(([key,label])=>`<th class="${numericKey.has(key)?'t-number':''}">${esc(label)}</th>`).join('')}</tr></thead><tbody>${items.map(row=>`<tr ${safeId(row.id,'key')}>${columns.map(([key])=>`<td class="${numericKey.has(key)?'t-number':''}">${key==='status'?badge(row.status,stock?statuses[row.status]:row.status==='Voided'?'grey':'green'):key==='variance'&&row.variance!==null?badge(fmt(row.variance),varianceTone(db,row.variance)):key==='asOf'?dayText(row.asOf):cellText(key,row)}</td>`).join('')}</tr>`).join('')||empty(columns.length,'No records match this report and its filters.')}</tbody></table></div>${foot}`;
 }
 function reportsPage() {
   const s=view.reports, products=unique([...db.stock,...db.transactions].map(row=>row.product));
@@ -733,7 +734,7 @@ function showImportPreview(file,raw,lines) {
 }
 function importHistory() {
   openModal('Import History','Confirmed daily stock uploads and their outcomes.',
-    `<div class="table-wrap" tabindex="0" aria-label="Daily stock import history"><table class="report-table"><thead><tr><th>File name</th><th>Date and time</th><th>Uploaded by</th><th>Records</th><th>Successful</th><th>Failed</th><th>Status</th></tr></thead><tbody>${db.imports.map(row=>`<tr><td>${esc(row.file)}</td><td>${dateTime(row.at)}</td><td>${esc(row.user)}</td><td>${row.total}</td><td>${row.success}</td><td>${row.failed}</td><td>${badge(row.status,row.failed?(row.success?'amber':'red'):'green')}</td></tr>`).join('')||empty(7,'No daily stock uploads have been confirmed.')}</tbody></table></div>`,
+    `<div class="table-wrap" tabindex="0" aria-label="Daily stock import history"><table class="report-table"><thead><tr><th>File name</th><th>Date and time</th><th>Uploaded by</th><th>Records</th><th>Successful</th><th>Failed</th><th>Status</th></tr></thead><tbody>${db.imports.map(row=>`<tr><td>${esc(row.file)}</td><td>${dateTime(row.at)}</td><td>${esc(row.user)}</td><td>${esc(row.total)}</td><td>${esc(row.success)}</td><td>${esc(row.failed)}</td><td>${badge(row.status,row.failed?(row.success?'amber':'red'):'green')}</td></tr>`).join('')||empty(7,'No daily stock uploads have been confirmed.')}</tbody></table></div>`,
     button('Back to Upload',null,'import'),true);
 }
 async function confirmImport(target) {
@@ -818,6 +819,7 @@ async function submit(event) {
       await commit(latest=>{
         if(!nonNegative(values.check)||!nonNegative(values.allowed)||Number(values.allowed)<Number(values.check))throw Error('The maximum allowed difference must be at least the accepted difference.');
         const before=latest.tolerance;
+        if(before.check===Number(values.check)&&before.allowed===Number(values.allowed))return;
         latest.tolerance={check:Number(values.check),allowed:Number(values.allowed)};
         audit(latest,{action:'Variance tolerance updated',kind:'Settings',id:'variance-tolerance',before,after:latest.tolerance,reason:'Variance settings'});
       },'Variance settings saved.');
@@ -912,7 +914,7 @@ const actions={
 };
 function delegated(event) {
   const target=event.target.closest('[data-action]');
-  const action=target&&actions[target.dataset.action];
+  const action=target&&Object.hasOwn(actions,target.dataset.action)&&actions[target.dataset.action];
   if(action&&role&&allowedAction(target.dataset.action)) action(target);
 }
 main.addEventListener('click',delegated);
@@ -1002,7 +1004,7 @@ async function synchronize() {
 
 signinForm.addEventListener('submit',async event=>{
   event.preventDefault();
-  if(signinButton.disabled) return;
+  if(window.self!==window.top||signinButton.disabled) return;
   const {email,password}=Object.fromEntries(new FormData(signinForm));
   signinButton.disabled=true;
   signinButton.textContent='Signing in…';
@@ -1024,12 +1026,17 @@ document.getElementById('signout').addEventListener('click',()=>void leaveWorksp
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)void synchronize();});
 setInterval(()=>void synchronize(),12000);
 
-signinButton.disabled=true;
-signinButton.textContent='Checking session…';
-restoreSession().then(restored=>restored?openWorkspace():null).catch(async error=>{
-  await signOut();
-  clearWorkspace(error.message);
-}).finally(()=>{
-  signinButton.disabled=false;
-  signinButton.textContent='Sign in';
-});
+if(window.self===window.top) {
+  signinShell.hidden=false;
+  signinButton.disabled=true;
+  signinButton.textContent='Checking session…';
+  restoreSession().then(restored=>restored?openWorkspace():null).catch(async error=>{
+    await signOut();
+    clearWorkspace(error.message);
+  }).finally(()=>{
+    signinButton.disabled=false;
+    signinButton.textContent='Sign in';
+  });
+} else {
+  document.getElementById('frame-notice').hidden=false;
+}

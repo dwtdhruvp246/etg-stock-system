@@ -4,7 +4,7 @@ let storage;
 try { storage=globalThis.sessionStorage; } catch {}
 const storageKey='etg-stock-session-v1';
 const client=globalThis.supabase.createClient(supabaseUrl,supabaseKey,{
-  auth:{storage,storageKey,detectSessionInUrl:false,persistSession:Boolean(storage)},
+  auth:{storage,storageKey,detectSessionInUrl:false,persistSession:Boolean(storage),autoRefreshToken:globalThis.self===globalThis.top},
 });
 const table='etg_stock_state';
 let currentUser;
@@ -21,7 +21,11 @@ export async function restoreSession() {
 
 export async function signIn(email,password) {
   const {data,error}=await client.auth.signInWithPassword({email,password});
-  if(error) throw error;
+  if(error) {
+    if(error.status===429) throw Error('Too many sign-in attempts. Wait a few minutes and try again.');
+    if(!error.status||error.status>=500) throw Error('Sign-in is temporarily unavailable. Try again shortly.');
+    throw Error('Check your email and password and try again.');
+  }
   currentUser=data.user;
 }
 
@@ -39,7 +43,9 @@ function checked(result) {
   if(result.error) {
     if(['PGRST205','42P01'].includes(result.error.code)) throw Error('The stock database setup is pending. Ask your administrator to apply the migration.');
     if(result.status===401) throw new AccessError('Your session ended. Sign in again.');
-    throw Error(result.error.message||'Supabase could not complete the request.');
+    if(result.error.code==='42501') throw new AccessError('This account does not have permission for this action.');
+    if(result.error.code==='23514') throw Error('The database rejected this change. Reload the record and try again.');
+    throw Error('The stock service could not complete the request. Try again shortly.');
   }
   return result.data;
 }
@@ -65,7 +71,9 @@ export async function fetchStock(after) {
 export async function writeStock(mutator) {
   for(let attempt=0;attempt<2;attempt++) {
     const latest=await fetchStock();
+    const auditLength=latest.audit.length;
     const result=mutator(latest);
+    if(latest.audit.length===auditLength) return {db:latest,result};
     const {revision,...data}=latest;
     const response=await client.from(table).update({data,version:Number(revision)+1}).eq('id',1).eq('version',revision).select('version,data').maybeSingle();
     if(response.status===0) throw Error('The connection dropped while saving. Check the record before trying again.');

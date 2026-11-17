@@ -1,7 +1,7 @@
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const xml = value => String(value ?? '').replace(/[<>&"']/g,char=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&apos;'}[char]));
-const safeCell = value => typeof value === 'string' && /^[=+\-@\t\r]/.test(value) ? "'"+value : value;
+const safeCell = value => typeof value === 'string' && /^(?:[\t\r\n]|[\s\p{Cf}\p{Cc}]*[=+\-@])/u.test(value.normalize('NFKC')) ? "'"+value : value;
 export function readCsv(source) {
   const text = source.replace(/^\uFEFF/,'');
   const first = text.split(/\r?\n/,1)[0];
@@ -66,26 +66,59 @@ async function unzipXml(buffer) {
   while(end>=Math.max(0,v.byteLength-65557) && v.getUint32(end,true)!==0x06054b50) end--;
   if(end<0 || v.getUint32(end,true)!==0x06054b50) throw Error('This file is not a valid Excel workbook.');
   let ptr=v.getUint32(end+16,true);
-  const files={};
+  const directoryStart=ptr;
+  const directoryEnd=ptr+v.getUint32(end+12,true);
+  if(directoryEnd>end) throw Error('The workbook directory could not be read.');
+  const files=Object.create(null);
   const count=v.getUint16(end+10,true);
+  let totalExpanded=0;
   for(let i=0;i<count;i++) {
-    if(v.getUint32(ptr,true)!==0x02014b50) throw Error('The workbook directory could not be read.');
+    if(ptr+46>directoryEnd||v.getUint32(ptr,true)!==0x02014b50) throw Error('The workbook directory could not be read.');
+    const flags=v.getUint16(ptr+8,true);
     const method=v.getUint16(ptr+10,true), size=v.getUint32(ptr+20,true), expanded=v.getUint32(ptr+24,true);
     const nameLen=v.getUint16(ptr+28,true), extra=v.getUint16(ptr+30,true), comment=v.getUint16(ptr+32,true);
+    const next=ptr+46+nameLen+extra+comment;
+    if(next>directoryEnd) throw Error('The workbook directory could not be read.');
     const name=dec.decode(new Uint8Array(buffer,ptr+46,nameLen));
     const location=v.getUint32(ptr+42,true);
-    ptr+=46+nameLen+extra+comment;
+    ptr=next;
     if(!/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|worksheets\/[^/]+\.xml)$/.test(name)) continue;
-    if(expanded>30_000_000) throw Error('This workbook sheet is too large for the demo.');
+    if(flags&1) throw Error('Choose a workbook without password protection.');
+    totalExpanded+=expanded;
+    if(expanded>30_000_000||totalExpanded>60_000_000) throw Error('This workbook is too large to import.');
+    if(Object.hasOwn(files,name)||location+30>directoryStart||v.getUint32(location,true)!==0x04034b50) throw Error('The workbook sheet could not be read.');
     const start=location+30+v.getUint16(location+26,true)+v.getUint16(location+28,true);
+    if(start+size>directoryStart) throw Error('The workbook sheet could not be read.');
     const compressed=new Uint8Array(buffer,start,size);
-    if(method===0) files[name]=dec.decode(compressed);
-    else if(method===8) files[name]=dec.decode(await new Response(new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
-    else throw Error('This Excel compression format is unsupported. Save the file as CSV and retry.');
+    if(method===0&&size===expanded) files[name]=dec.decode(compressed);
+    else if(method===8) files[name]=await inflateXml(compressed,expanded);
+    else throw Error('The workbook sheet could not be read. Save the file as CSV and retry.');
   }
   return files;
 }
+
+async function inflateXml(compressed,expanded) {
+  const reader=new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+  const decoder=new TextDecoder();
+  const parts=[];
+  let size=0;
+  try {
+    for(let chunk=await reader.read();!chunk.done;chunk=await reader.read()) {
+      size+=chunk.value.byteLength;
+      if(size>expanded) throw Error('The workbook sheet does not match its declared size.');
+      parts.push(decoder.decode(chunk.value,{stream:true}));
+    }
+    if(size!==expanded) throw Error('The workbook sheet does not match its declared size.');
+    parts.push(decoder.decode());
+    return parts.join('');
+  } finally {
+    await reader.cancel().catch(()=>{});
+    reader.releaseLock();
+  }
+}
+
 function parseXml(source) {
+  if(/<!DOCTYPE\b/i.test(source)) throw Error('The workbook contains an unsupported XML declaration.');
   const doc=new DOMParser().parseFromString(source,'application/xml');
   if(doc.querySelector('parsererror')) throw Error('The sheet contains unreadable XML.');
   return doc;
@@ -114,8 +147,10 @@ export async function readTable(file) {
   return nodes(parseXml(files[path]),'row').map(element=>{
     const row=[];
     for(const cell of nodes(element,'c')) {
-      const letters=(cell.getAttribute('r')||'').match(/^[A-Z]+/)?.[0];
-      const index=letters ? lettersToIndex(letters) : row.length;
+      const address=cell.getAttribute('r');
+      const match=address&&/^([A-Z]{1,3})[1-9]\d{0,6}$/.exec(address);
+      const index=match ? lettersToIndex(match[1]) : row.length;
+      if((address&&!match)||index>=16384) throw Error('The workbook contains an invalid cell address.');
       const kind=cell.getAttribute('t'), value=nodes(cell,'v')[0]?.textContent??'';
       row[index]=kind==='s' ? shared[Number(value)]||'' : kind==='inlineStr'?textNodes(cell):value;
     }

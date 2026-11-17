@@ -5,12 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#111d32">
 <meta name="description" content="Fertilizer stock and dispatch operations.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://btmmfwnpifugjjmjlvve.supabase.co; img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://btmmfwnpifugjjmjlvve.supabase.co; img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'">
 <title>Stock &amp; Dispatch</title>
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<main class="signin-shell" id="signin-shell">
+<main class="signin-shell" id="signin-shell" hidden>
   <section class="signin-card">
     <div class="signin-brand"><span class="brand-icon" data-icon="brand"></span><span>Stock &amp; Dispatch</span></div>
     <h1>Sign in</h1>
@@ -21,6 +22,12 @@
       <p class="flash error" id="signin-status" role="status" hidden></p>
       <button class="btn primary" type="submit">Sign in</button>
     </form>
+  </section>
+</main>
+<main class="signin-shell" id="frame-notice" hidden>
+  <section class="signin-card">
+    <h1>Open Stock &amp; Dispatch directly</h1>
+    <p>Sign-in is available when the app is opened in its own tab.</p>
   </section>
 </main>
 <div class="layout" id="app-shell" hidden>
@@ -44,7 +51,7 @@
 </div>
 <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-<script src="./vendor/supabase-2.119.0.js" defer></script>
+<script src="./vendor/supabase-2.119.0.js" integrity="sha384-uteMfOloLDGt042uDz+xHGF3ym63/WQ6rFq7murQRG8Ih7QrXGEGNtWd8688sb4O" defer></script>
 <script type="module" src="./app.js"></script>
 </body>
 </html>
