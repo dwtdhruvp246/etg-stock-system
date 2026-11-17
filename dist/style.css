@@ -207,3 +207,8 @@ details .form-grid{margin-top:10px}
 .profile-label{min-width:0}
 .profile-label strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .signout{width:100%;margin-top:13px}
+
+#production-fields,#production-inputs{display:grid;gap:10px}
+#production-fields>button{justify-self:start}
+.production-row{align-items:end}
+.production-row>button{justify-self:start}

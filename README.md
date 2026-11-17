@@ -23,6 +23,7 @@ Add warehouses first, then stock, clients and transporters. Removing stock or a 
 
 - **Warehouse transfer.** Choose **Transfer Out** or **Transfer In**, then select the sending and receiving warehouses. Both warehouse balances update together.
 - **Loose truck receipt.** Choose **Stock Received**, set **Load type** to **Bulk (loose)**, and enter the net weighbridge weight in MT.
+- **Production.** Select the finished product, warehouse and raw materials used, then enter the finished weight. The app records loss as total raw material weight minus finished weight. Choose warehouse stock to add the finished product, or direct dispatch and enter a customer and truck registration to send it out without increasing warehouse stock.
 - **Repacking.** Set up separate material codes for the source packaging and the finished bags in Stock Management. Choose **Repacking**, select the warehouse and both codes, then enter the number and weight of the finished bags. The same tonnage is deducted from the source and added to the finished material. Both entries appear under **Repacking** in the Transaction Register and Stock Movement Report.
 
 ## Hosting

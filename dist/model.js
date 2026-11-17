@@ -15,7 +15,7 @@ export const partyName = (db,kind,tx) => db[kind+'s'].find(entry=>entry.id===tx[
 const activeEntry = (db,kind,id) => db[kind+'s'].find(entry=>entry.id===id&&!entry.archived);
 export const cols = [
   ['date','Date'],['truck','Truck'],['trailer1','Trailer 1'],['trailer2','Trailer 2'],['transporter','Transporter'],
-  ['loadType','Load Type'],['pack','Packaging'],['bags','Number of Bags'],['weightKg','Weight per Bag (kg)'],['status','Status'],['produced','Qty Produced'],['weigh','Weighbridge Weight'],
+  ['loadType','Load Type'],['pack','Packaging'],['bags','Number of Bags'],['weightKg','Weight per Bag (kg)'],['status','Status'],['produced','Qty Produced (MT)'],['productionLoss','Production Loss (MT)'],['weigh','Weighbridge Weight'],
   ['expected','Expected Weight'],['variance','Variance'],['accounting','Accounting Weight'],['out','Total MT Out'],
   ['balance','Stock Balance'],['invoice','Invoice/Contract'],['grv','GRV'],['dv','DV'],['stv','STV'],
   ['beiraDv','Beira DV'],['loading','Loading Point'],['offloading','Offloading Point'],['clientDoc','Client Doc No.'],
@@ -40,7 +40,8 @@ export const records = db => db.stock.filter(row => !row.archived);
 export const stockAt = (db,code,warehouse) => records(db).find(row => row.code === code && row.warehouse === warehouse);
 export const isTransfer = type => type === 'Transfer Out' || type === 'Transfer In';
 export const isRepacking = type => type === 'Repacking Out' || type === 'Repacking In';
-export const matchesMovement = (type,filter) => !filter || type===filter || (filter==='Repacking'&&isRepacking(type));
+export const isProductionBatch = type => ['Production Input','Production Output','Production Direct'].includes(type);
+export const matchesMovement = (type,filter) => !filter || type===filter || (filter==='Production'&&isProductionBatch(type)) || (filter==='Dispatch'&&type==='Production Direct') || (filter==='Repacking'&&isRepacking(type));
 export const canMoveBulk = type => type==='Stock Received'||isTransfer(type);
 export function packageKg(item) {
   const match=item?.pack.replaceAll(',', '').match(/([\d.]+)\s*(kg|mt|t|tonnes?|tons?)\b/i);
@@ -145,6 +146,7 @@ export function saveTransaction(db,values,at=stamp(),user=operator) {
   if (values.transporterId&&!transporter) throw Error('Select a valid transporter.');
   if (values.clientId&&!client) throw Error('Select a valid client.');
   const parties={transporter,client};
+  if(values.type==='Production') return saveProduction(db,values,parties,at,user);
   const stock = stockAt(db,values.code,values.warehouse);
   if(values.type==='Repacking') return saveRepacking(db,values,stock,parties,at,user);
   const sending = values.type === 'Transfer In' ? stockAt(db,values.code,values.otherWarehouse) : null;
@@ -205,6 +207,39 @@ function saveRepacking(db,values,source,parties,at,user) {
   return postMovement(db,references,legs,parties,at,user);
 }
 
+function saveProduction(db,values,parties,at,user) {
+  const {rawCodes,rawWeights,code,warehouse,productionDestination,produced}=values;
+  const finished=stockAt(db,code,warehouse)||records(db).find(row=>row.code===code);
+  if(!finished) throw Error('Select the finished product.');
+  if(!Array.isArray(rawCodes)||!Array.isArray(rawWeights)||!rawCodes.length||rawCodes.length!==rawWeights.length||
+     new Set(rawCodes).size!==rawCodes.length||rawCodes.includes(code)) throw Error('Select distinct raw materials, separate from the finished product.');
+  const toKg=value=>{
+    const kg=Math.round(Number(value)*1000);
+    if(!Number.isSafeInteger(kg)||kg<=0||kg/1000!==Number(value)) throw Error('Enter positive weights with up to three decimal places.');
+    return kg;
+  };
+  const outputKg=toKg(produced);
+  let inputKg=0;
+  const legs=rawCodes.map((rawCode,index)=>{
+    const row=stockAt(db,rawCode,warehouse);
+    if(!row) throw Error('Each raw material must have a stock record in the selected warehouse.');
+    const kg=toKg(rawWeights[index]);
+    inputKg+=kg;
+    return {row,type:'Production Input',delta:-kg/1000,quantity:{accounting:kg/1000,variance:null}};
+  });
+  if(!Number.isSafeInteger(inputKg)||outputKg>inputKg) throw Error('Finished weight cannot exceed the total raw materials used.');
+  const direct=productionDestination==='dispatch';
+  const truck=String(values.truck||'').trim();
+  if(direct&&(!truck||!parties.client)) throw Error('Select a customer and enter the truck registration for direct dispatch.');
+  if(!direct&&productionDestination!=='stock') throw Error('Select where the finished product will go.');
+  const row=finished.warehouse===warehouse?finished:atWarehouse(finished,warehouse);
+  const output=outputKg/1000;
+  legs.push({row,type:direct?'Production Direct':'Production Output',delta:direct?0:output,
+    quantity:{accounting:output,produced:output,productionLoss:(inputKg-outputKg)/1000,variance:null,...(direct?{out:output,balance:null}:{})}});
+  const details=direct?Object.fromEntries(['truck','trailer1','trailer2','loading','offloading',...docFields.map(([key])=>key)].map(key=>[key,String(values[key]||'').trim()])):{};
+  return postMovement(db,{date:values.date,notes:values.notes,...details},legs,direct?parties:{},at,user);
+}
+
 function postMovement(db,values,legs,{transporter,client},at,user) {
   for (const leg of legs) {
     if (leg.delta < 0 && -leg.delta > leg.row.balance) {
@@ -219,18 +254,20 @@ function postMovement(db,values,legs,{transporter,client},at,user) {
     const updated = {...row,balance,status,updatedBy:user,updatedAt:at,rev:uid()};
     const index = db.stock.findIndex(stock => stock.id === row.id);
     const before = index < 0 ? null : row;
-    if (index < 0) db.stock.push(updated);
-    else db.stock[index] = updated;
+    if(delta) {
+      if (index < 0) db.stock.push(updated);
+      else db.stock[index] = updated;
+    }
     const tx = {
       ...values,id:nextTxId(db),group,product:row.product,code:row.code,warehouse:row.warehouse,type,delta,pack:row.pack,
       transporterId:transporter?.id||'',transporter:transporter?.name||'',clientId:client?.id||'',client:client?.name||'',
-      status:'Completed',...quantity,out:delta<0?-delta:0,balance,
+      status:'Completed',out:delta<0?-delta:0,balance,...quantity,
       loading:transfer?warehouseName(db,legs.find(leg=>leg.delta<0).row.warehouse):values.loading,
       offloading:transfer?warehouseName(db,legs.find(leg=>leg.delta>0).row.warehouse):values.offloading,
       createdBy:user,createdAt:at,updatedBy:user,updatedAt:at,rev:uid(),
     };
     db.transactions.unshift(tx);
-    audit(db,{action:type,kind:'Stock',id:row.id,before,after:updated,at,user,reason:values.notes||'',delta,movement:tx.id});
+    if(delta) audit(db,{action:type,kind:'Stock',id:row.id,before,after:updated,at,user,reason:values.notes||'',delta,movement:tx.id});
     audit(db,{action:'Transaction recorded',kind:'Transaction',id:tx.id,after:tx,at,user,reason:values.notes||'',movement:tx.id});
     return tx;
   });
@@ -265,7 +302,13 @@ function transactionGroup(db,id,rev) {
 }
 
 export function updateTransactionDetails(db,id,rev,values,at=stamp(),user=operator) {
-  const rows=transactionGroup(db,id,rev);
+  let rows=transactionGroup(db,id,rev);
+  if(rows.some(row=>isProductionBatch(row.type))) {
+    const selected=rows.find(row=>row.id===id);
+    if(selected.type==='Production Input') throw Error('Edit details from the finished production entry.');
+    if(selected.type==='Production Direct'&&(!String(values.truck||'').trim()||!values.clientId)) throw Error('Truck registration and customer are required.');
+    rows=[selected];
+  }
   if(isRepacking(rows[0].type)) {
     const notes=String(values.notes||'').trim();
     for(const before of rows) {
@@ -296,6 +339,7 @@ export function voidTransaction(db,id,rev,reason,at=stamp(),user=operator) {
   const comment=String(reason||'').trim();
   if(!comment) throw Error('Enter a reason for voiding this transaction.');
   const changes=transactionGroup(db,id,rev).map(tx=>{
+    if(tx.type==='Production Direct') return {tx};
     if(!activeEntry(db,'warehouse',tx.warehouse)) throw Error('A warehouse linked to this transaction is archived.');
     const before=stockAt(db,tx.code,tx.warehouse)||db.stock.find(row=>row.code===tx.code&&row.warehouse===tx.warehouse);
     if(!before) throw Error('This transaction’s stock record could not be found.');
@@ -304,12 +348,14 @@ export function voidTransaction(db,id,rev,reason,at=stamp(),user=operator) {
     return {tx,before,balance};
   });
   for(const {tx,before,balance} of changes) {
-    const status=balance===0?'Out of Stock':stockStatus({...before,balance,status:before.status==='Out of Stock'?'Available':before.status});
-    const after={...before,balance,status,archived:before.archived&&balance===0,updatedBy:user,updatedAt:at,rev:uid()};
-    db.stock[db.stock.indexOf(before)]=after;
     const voided={...tx,status:'Voided',voidReason:comment,updatedBy:user,updatedAt:at,rev:uid()};
     db.transactions[db.transactions.indexOf(tx)]=voided;
-    audit(db,{action:'Transaction reversal',kind:'Stock',id:after.id,before,after,at,user,reason:comment,delta:-tx.delta,movement:tx.id});
+    if(before) {
+      const status=balance===0?'Out of Stock':stockStatus({...before,balance,status:before.status==='Out of Stock'?'Available':before.status});
+      const after={...before,balance,status,archived:before.archived&&balance===0,updatedBy:user,updatedAt:at,rev:uid()};
+      db.stock[db.stock.indexOf(before)]=after;
+      audit(db,{action:'Transaction reversal',kind:'Stock',id:after.id,before,after,at,user,reason:comment,delta:-tx.delta,movement:tx.id});
+    }
     audit(db,{action:'Transaction voided',kind:'Transaction',id:tx.id,before:tx,after:voided,at,user,reason:comment,movement:tx.id});
   }
 }
