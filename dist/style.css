@@ -227,3 +227,11 @@ details .form-grid{margin-top:10px}
   #depot-print-sheet td,#depot-print-sheet th{white-space:normal;overflow-wrap:anywhere}
   #depot-print-sheet tr{break-inside:avoid}
 }
+
+.select-search-panel{position:fixed;z-index:1000;display:grid;gap:6px;padding:7px;border:1px solid #b5c4d4;border-radius:8px;background:#fff;color:#17283c;box-shadow:0 8px 24px #23384d33;box-sizing:border-box}
+.select-search-panel .select-search-input{width:100%;font:inherit;font-size:16px;padding:7px 9px;color:inherit;background:#fff;border:1px solid #8fa3b9;border-radius:5px}
+.select-search-options{overflow:auto;overscroll-behavior:contain}
+.select-search-options [role=option],.select-search-empty{padding:8px 9px;border-radius:4px;font-size:14px;overflow-wrap:anywhere}
+.select-search-options [role=option]{cursor:pointer}
+.select-search-options [role=option]:hover,.select-search-options .is-active{background:#e8f1fc;color:#142d57}
+.select-search-options [aria-selected=true]{font-weight:700}

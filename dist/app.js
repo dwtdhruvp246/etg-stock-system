@@ -1,3 +1,4 @@
+import './search-select.js';
 import {zone,operator,warehouseName,partyName,directoryKinds,statuses,movements,cols,docFields,stockCols,today,stamp,round,numeric,nonNegative,isLow,isOut,stockStatus,records,stockAt,isTransfer,isRepacking,isProductionBatch,matchesMovement,canMoveBulk,canOpenStock,packageKg,repackWeight,calculate,varianceTone,saveStock,saveTransaction,saveDirectoryEntry,archiveDirectoryEntry,updateTransactionDetails,voidTransaction,audit,uid,setOperator,emptyStockState} from './model.js';
 import {AccessError,account,restoreSession,signIn,signOut,accessRole,fetchStock,writeStock,depotAssignment,fetchDepotCatalog,fetchDepotOrders,submitDepotOrder} from './backend.js';
 import {readTable,makeCsv,makeSheet,makePdf,download} from './files.js';
