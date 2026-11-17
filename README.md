@@ -6,7 +6,7 @@ The static app in `dist/` uses Supabase Auth and the Supabase Data API. The data
 
 ## Supabase setup
 
-1. In the ETG project, open **SQL Editor** and run [the migration](supabase/migrations/20261116151000_etg_stock.sql) once. It creates the ETG tables and policies.
+1. Apply the SQL files in [supabase/migrations](supabase/migrations) in timestamp order. They create the stock tables, access policies and movement validation.
 2. In **Authentication → Sign In / Providers**, switch off **Allow new users to sign up** and anonymous sign-ins. Keep the email/password provider enabled.
 3. Under **Authentication → Users**, create the user manually with an email and password. Copy the user's ID.
 4. In SQL Editor, assign the user one role. Replace the example UUID and set `full_access` or `view_only`.
@@ -20,6 +20,10 @@ on conflict (user_id) do update set access_role = excluded.access_role;
 **Full Access** allows adding and editing stock, recording and voiding movements, managing warehouses and contacts, and importing and exporting. **View Only** allows viewing records, reports and history. Accounts without an ETG role have no ETG database access. Remove a user's role row to revoke access.
 
 Add warehouses first, then stock, clients and transporters. Removing stock or a directory entry uses archiving. Voiding a movement reverses its balance and keeps the original entry in the register. Correct posted quantities by voiding and re-entering the movement.
+
+- **Warehouse transfer.** Choose **Transfer Out** or **Transfer In**, then select the sending and receiving warehouses. Both warehouse balances update together.
+- **Loose truck receipt.** Choose **Stock Received**, set **Load type** to **Bulk (loose)**, and enter the net weighbridge weight in MT.
+- **Repacking.** Set up separate material codes for the source packaging and the finished bags in Stock Management. Choose **Repacking**, select the warehouse and both codes, then enter the number and weight of the finished bags. The same tonnage is deducted from the source and added to the finished material. Both entries appear under **Repacking** in the Transaction Register and Stock Movement Report.
 
 ## Hosting
 

@@ -9,13 +9,13 @@ export const statuses = {
   'Pending Release':'purple','In Transit':'grey','Under Investigation':'amber',
   'Reserved for Contract':'blue','Awaiting Transfer':'teal',
 };
-export const movements = ['Stock Received','Production','Dispatch','Transfer Out','Transfer In','Stock Adjustment','Return','Damaged Stock','Stock Count Correction'];
+export const movements = ['Stock Received','Production','Dispatch','Transfer Out','Transfer In','Repacking','Stock Adjustment','Return','Damaged Stock','Stock Count Correction'];
 export const directoryKinds = {warehouse:'Warehouse',transporter:'Transporter',client:'Client'};
 export const partyName = (db,kind,tx) => db[kind+'s'].find(entry=>entry.id===tx[kind+'Id'])?.name || tx[kind] || '';
 const activeEntry = (db,kind,id) => db[kind+'s'].find(entry=>entry.id===id&&!entry.archived);
 export const cols = [
   ['date','Date'],['truck','Truck'],['trailer1','Trailer 1'],['trailer2','Trailer 2'],['transporter','Transporter'],
-  ['bags','Number of Bags'],['status','Status'],['produced','Qty Produced'],['weigh','Weighbridge Weight'],
+  ['loadType','Load Type'],['pack','Packaging'],['bags','Number of Bags'],['weightKg','Weight per Bag (kg)'],['status','Status'],['produced','Qty Produced'],['weigh','Weighbridge Weight'],
   ['expected','Expected Weight'],['variance','Variance'],['accounting','Accounting Weight'],['out','Total MT Out'],
   ['balance','Stock Balance'],['invoice','Invoice/Contract'],['grv','GRV'],['dv','DV'],['stv','STV'],
   ['beiraDv','Beira DV'],['loading','Loading Point'],['offloading','Offloading Point'],['clientDoc','Client Doc No.'],
@@ -39,6 +39,13 @@ export const stockStatus = row => row.status === 'Available' || row.status === '
 export const records = db => db.stock.filter(row => !row.archived);
 export const stockAt = (db,code,warehouse) => records(db).find(row => row.code === code && row.warehouse === warehouse);
 export const isTransfer = type => type === 'Transfer Out' || type === 'Transfer In';
+export const isRepacking = type => type === 'Repacking Out' || type === 'Repacking In';
+export const matchesMovement = (type,filter) => !filter || type===filter || (filter==='Repacking'&&isRepacking(type));
+export const canMoveBulk = type => type==='Stock Received'||isTransfer(type);
+export function packageKg(item) {
+  const match=item?.pack.replaceAll(',', '').match(/([\d.]+)\s*(kg|mt|t|tonnes?|tons?)\b/i);
+  return match?Number(match[1])*(match[2].toLowerCase()==='kg'?1:1000)||null:null;
+}
 export const canOpenStock = type => ['Stock Received','Production','Return','Transfer In'].includes(type);
 const signed = type => type === 'Stock Adjustment' || type === 'Stock Count Correction';
 const outgoing = type => ['Dispatch','Transfer Out','Damaged Stock'].includes(type);
@@ -105,14 +112,23 @@ export function saveStock(db,values,id,at=stamp(),user=operator,source='') {
 }
 
 export function calculate(values,item) {
-  const guessedKg = Number(item?.pack.replaceAll(',', '').match(/([\d.]+)\s*kg/i)?.[1] || 50);
-  const kg = numeric(values.weightKg) ? Number(values.weightKg) : guessedKg;
+  if(values.loadType==='bulk'&&canMoveBulk(values.type)) {
+    const accounting=round(Number(values.weigh)||0);
+    return {kg:null,expected:null,variance:null,accounting,delta:outgoing(values.type)?-accounting:accounting};
+  }
+  const kg = numeric(values.weightKg) ? Number(values.weightKg) : packageKg(item)||50;
   const expected = round(Number(values.bags||0)*kg/1000);
   const variance = numeric(values.weigh) ? round(Number(values.weigh)-expected) : null;
   const accounting = numeric(values.accounting) ? round(Number(values.accounting)) : numeric(values.weigh) ? round(Number(values.weigh)) : values.type === 'Production' && numeric(values.produced) ? round(Number(values.produced)) : expected;
   const amount = signed(values.type) ? Number(values.adjustment||0) : outgoing(values.type) ? -accounting : accounting;
   return {kg,expected,variance,accounting,delta:round(amount)};
 }
+
+export function repackWeight({outputBags,outputKg}) {
+  const gramsPerBag=Math.round(Number(outputKg||0)*1000);
+  return Math.round(Number(outputBags||0)*gramsPerBag/1000)/1000;
+}
+const atWarehouse = (template,warehouse) => ({...template,id:uid(),warehouse,balance:0,status:'Available',comment:''});
 
 export function varianceTone(db,value) {
   if (value === null || value === '') return 'grey';
@@ -124,21 +140,27 @@ export function varianceTone(db,value) {
 export function saveTransaction(db,values,at=stamp(),user=operator) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(values.date||'') || !movements.includes(values.type)) throw Error('Enter a valid date and movement type.');
   if (!activeEntry(db,'warehouse',values.warehouse)) throw Error('Select an active warehouse.');
-  const stock = stockAt(db,values.code,values.warehouse);
-  const sending = values.type === 'Transfer In' ? stockAt(db,values.code,values.otherWarehouse) : null;
-  if (values.type === 'Transfer In' && !sending) throw Error('Select a sending warehouse that holds this material.');
-  const template = !stock&&canOpenStock(values.type) ? sending||records(db).find(row=>row.code===values.code) : null;
-  const item = stock || (template ? {...template,id:uid(),warehouse:values.warehouse,balance:0,status:'Available',comment:''} : null);
-  if (!item) throw Error('Select a material code and warehouse with an active stock record.');
   const transporter=activeEntry(db,'transporter',values.transporterId);
   const client=activeEntry(db,'client',values.clientId);
   if (values.transporterId&&!transporter) throw Error('Select a valid transporter.');
   if (values.clientId&&!client) throw Error('Select a valid client.');
-  if (!nonNegative(values.bags) || !Number.isInteger(Number(values.bags))) throw Error('Enter a whole number of bags of zero or more.');
+  const parties={transporter,client};
+  const stock = stockAt(db,values.code,values.warehouse);
+  if(values.type==='Repacking') return saveRepacking(db,values,stock,parties,at,user);
+  const sending = values.type === 'Transfer In' ? stockAt(db,values.code,values.otherWarehouse) : null;
+  if (values.type === 'Transfer In' && !sending) throw Error('Select a sending warehouse that holds this material.');
+  const template = !stock&&canOpenStock(values.type) ? sending||records(db).find(row=>row.code===values.code) : null;
+  const item = stock || (template ? atWarehouse(template,values.warehouse) : null);
+  if (!item) throw Error('Select a material code and warehouse with an active stock record.');
+  const bulk=values.loadType==='bulk';
+  if (bulk && (!canMoveBulk(values.type)||!nonNegative(values.weigh)||Number(values.weigh)<=0||round(Number(values.weigh))!==Number(values.weigh))) {
+    throw Error('Enter a positive net bulk weight with up to three decimal places.');
+  }
+  if (!bulk && (!nonNegative(values.bags) || !Number.isInteger(Number(values.bags)))) throw Error('Enter a whole number of bags of zero or more.');
   if (values.weigh !== '' && values.weigh != null && !nonNegative(values.weigh)) throw Error('Weighbridge weight must be zero or more.');
   if (values.produced !== '' && values.produced != null && !nonNegative(values.produced)) throw Error('Production weight must be zero or more.');
   if (values.accounting !== '' && values.accounting != null && !nonNegative(values.accounting)) throw Error('Accounting weight must be zero or more.');
-  if (values.weightKg !== '' && values.weightKg != null && (!numeric(values.weightKg) || Number(values.weightKg) <= 0)) throw Error('Weight per bag must be greater than zero.');
+  if (!bulk && values.weightKg !== '' && values.weightKg != null && (!numeric(values.weightKg) || Number(values.weightKg) <= 0)) throw Error('Weight per bag must be greater than zero.');
   if (signed(values.type) && (!String(values.notes||'').trim() || !numeric(values.adjustment))) throw Error('Stock adjustments and count corrections require a quantity and reason.');
   const transfer = isTransfer(values.type);
   if (transfer && (!activeEntry(db,'warehouse',values.otherWarehouse) || values.otherWarehouse === item.warehouse)) {
@@ -147,16 +169,51 @@ export function saveTransaction(db,values,at=stamp(),user=operator) {
   const primary = calculate(values,item);
   if (!primary.delta) throw Error('Enter a movement quantity greater than zero. Adjustments can also use a negative quantity.');
   const other = transfer ? stockAt(db,item.code,values.otherWarehouse) : null;
-  const counter = transfer ? (other || {...item,id:uid(),warehouse:values.otherWarehouse,balance:0,status:'Available',comment:''}) : null;
-  const legs = [{row:item,type:values.type,delta:primary.delta}];
-  if (counter) legs.push({row:counter,type:values.type === 'Transfer Out' ? 'Transfer In' : 'Transfer Out',delta:-primary.delta});
+  const counter = transfer ? (other || atWarehouse(item,values.otherWarehouse)) : null;
+  const quantity={
+    loadType:bulk?'bulk':'bags',bags:bulk?null:Number(values.bags),weightKg:primary.kg,
+    produced:!bulk&&numeric(values.produced)?Number(values.produced):'',
+    weigh:numeric(values.weigh)?Number(values.weigh):'',expected:primary.expected,variance:primary.variance,
+    accounting:signed(values.type)?Math.abs(primary.delta):primary.accounting,
+  };
+  const legs = [{row:item,type:values.type,delta:primary.delta,quantity}];
+  if (counter) legs.push({row:counter,type:values.type === 'Transfer Out' ? 'Transfer In' : 'Transfer Out',delta:-primary.delta,quantity});
+  return postMovement(db,values,legs,parties,at,user);
+}
+
+function saveRepacking(db,values,source,parties,at,user) {
+  if(!source) throw Error('Select the source material and warehouse.');
+  const {outputCode}=values;
+  const template=stockAt(db,outputCode,source.warehouse)||records(db).find(row=>row.code===outputCode);
+  if(!template||outputCode===source.code) throw Error('Select a different material code for the finished bags.');
+  if(/\b(bulk|loose)\b/i.test(template.pack)) throw Error('Choose a material code for bagged stock as the finished material.');
+  const target=template.warehouse===source.warehouse?template:atWarehouse(template,source.warehouse);
+  const bags=Number(values.outputBags), kg=Number(values.outputKg), amount=repackWeight(values);
+  if(!Number.isSafeInteger(bags)||bags<=0) throw Error('Enter a whole number of finished bags greater than zero.');
+  if(!Number.isFinite(kg)||kg<=0||round(kg)!==kg) throw Error('Enter a positive bag weight with up to three decimal places.');
+  if(!Number.isFinite(amount)||amount<=0) throw Error('Enter a bag quantity and weight that produce at least 0.001 MT.');
+  const configuredKg=packageKg(target);
+  if(configuredKg&&kg!==configuredKg) throw Error(`The finished material is set up for ${configuredKg} kg bags. Use that weight or choose a different material code.`);
+  const sourceKg=packageKg(source);
+  if(sourceKg&&kg>=sourceKg) throw Error('The finished bags must be smaller than the source bags.');
+  const measured={produced:'',weigh:'',expected:null,variance:null,accounting:amount};
+  const legs=[
+    {row:source,type:'Repacking Out',delta:-amount,quantity:{...measured,loadType:null,bags:null,weightKg:null}},
+    {row:target,type:'Repacking In',delta:amount,quantity:{...measured,loadType:'bags',bags,weightKg:kg,expected:amount}},
+  ];
+  const references={date:values.date,notes:values.notes,loading:'',offloading:''};
+  return postMovement(db,references,legs,parties,at,user);
+}
+
+function postMovement(db,values,legs,{transporter,client},at,user) {
   for (const leg of legs) {
     if (leg.delta < 0 && -leg.delta > leg.row.balance) {
-      throw Error(`${warehouseName(db,leg.row.warehouse)} has ${leg.row.balance.toFixed(2)} MT available. The requested quantity is ${(-leg.delta).toFixed(2)} MT.`);
+      throw Error(`${leg.row.code} at ${warehouseName(db,leg.row.warehouse)} has ${leg.row.balance.toFixed(3)} MT available. The requested quantity is ${(-leg.delta).toFixed(3)} MT.`);
     }
   }
   const group = uid();
-  return legs.map(({row,type,delta}) => {
+  return legs.map(({row,type,delta,quantity}) => {
+    const transfer=isTransfer(type);
     const balance = round(row.balance+delta);
     const status = balance <= 0 ? 'Out of Stock' : ['Available','Low Stock','Out of Stock'].includes(row.status) ? (balance < 20 ? 'Low Stock' : 'Available') : row.status;
     const updated = {...row,balance,status,updatedBy:user,updatedAt:at,rev:uid()};
@@ -165,11 +222,9 @@ export function saveTransaction(db,values,at=stamp(),user=operator) {
     if (index < 0) db.stock.push(updated);
     else db.stock[index] = updated;
     const tx = {
-      ...values,id:nextTxId(db),group,product:item.product,code:item.code,warehouse:row.warehouse,type,delta,
+      ...values,id:nextTxId(db),group,product:row.product,code:row.code,warehouse:row.warehouse,type,delta,pack:row.pack,
       transporterId:transporter?.id||'',transporter:transporter?.name||'',clientId:client?.id||'',client:client?.name||'',
-      status:'Completed',bags:Number(values.bags),produced:numeric(values.produced)?Number(values.produced):'',
-      weigh:numeric(values.weigh)?Number(values.weigh):'',expected:primary.expected,variance:primary.variance,
-      accounting:signed(type)?Math.abs(delta):primary.accounting,out:delta<0?-delta:0,balance,
+      status:'Completed',...quantity,out:delta<0?-delta:0,balance,
       loading:transfer?warehouseName(db,legs.find(leg=>leg.delta<0).row.warehouse):values.loading,
       offloading:transfer?warehouseName(db,legs.find(leg=>leg.delta>0).row.warehouse):values.offloading,
       createdBy:user,createdAt:at,updatedBy:user,updatedAt:at,rev:uid(),
@@ -211,6 +266,15 @@ function transactionGroup(db,id,rev) {
 
 export function updateTransactionDetails(db,id,rev,values,at=stamp(),user=operator) {
   const rows=transactionGroup(db,id,rev);
+  if(isRepacking(rows[0].type)) {
+    const notes=String(values.notes||'').trim();
+    for(const before of rows) {
+      const after={...before,notes,updatedBy:user,updatedAt:at,rev:uid()};
+      db.transactions[db.transactions.indexOf(before)]=after;
+      audit(db,{action:'Transaction details updated',kind:'Transaction',id:after.id,before,after,at,user,movement:after.id});
+    }
+    return;
+  }
   const fields=['truck','trailer1','trailer2','notes',...docFields.map(([key])=>key)];
   if(!isTransfer(rows[0].type)) fields.push('loading','offloading');
   const changes=Object.fromEntries(fields.map(key=>[key,String(values[key]||'').trim()]));

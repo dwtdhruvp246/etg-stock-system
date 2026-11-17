@@ -1,4 +1,4 @@
-import {zone,operator,warehouseName,partyName,directoryKinds,statuses,movements,cols,docFields,stockCols,today,stamp,round,numeric,nonNegative,isLow,isOut,stockStatus,records,stockAt,isTransfer,canOpenStock,calculate,varianceTone,saveStock,saveTransaction,saveDirectoryEntry,archiveDirectoryEntry,updateTransactionDetails,voidTransaction,audit,uid,setOperator,emptyStockState} from './model.js';
+import {zone,operator,warehouseName,partyName,directoryKinds,statuses,movements,cols,docFields,stockCols,today,stamp,round,numeric,nonNegative,isLow,isOut,stockStatus,records,stockAt,isTransfer,isRepacking,matchesMovement,canMoveBulk,canOpenStock,packageKg,repackWeight,calculate,varianceTone,saveStock,saveTransaction,saveDirectoryEntry,archiveDirectoryEntry,updateTransactionDetails,voidTransaction,audit,uid,setOperator,emptyStockState} from './model.js';
 import {AccessError,account,restoreSession,signIn,signOut,accessRole,fetchStock,writeStock} from './backend.js';
 import {readTable,makeCsv,makeSheet,makePdf,download} from './files.js';
 
@@ -71,7 +71,7 @@ const pageList=[
 ];
 const movementTones={
   'Stock Received':['inbound','green'],'Dispatch':['outbound','blue'],'Production':['layers','purple'],
-  'Transfer Out':['swap','teal'],'Transfer In':['swap','teal'],'Return':['inbound','green'],
+  'Transfer Out':['swap','teal'],'Transfer In':['swap','teal'],'Repacking Out':['box','purple'],'Repacking In':['box','purple'],'Return':['inbound','green'],
   'Stock Adjustment':['edit','amber'],'Damaged Stock':['alert','red'],'Stock Count Correction':['edit','amber'],
 };
 const movementTone=type=>Object.hasOwn(movementTones,type)?movementTones[type]:['box','grey'];
@@ -194,13 +194,14 @@ function stockPage() {
 
 function txRows() {
   const state=view.transactions;
-  return db.transactions.filter(row=>(!state.warehouse||row.warehouse===state.warehouse)&&(!state.type||row.type===state.type)&&(!state.search||[row.id,row.code,row.product,row.truck,partyName(db,'transporter',row),partyName(db,'client',row),row.invoice,row.notes].some(value=>match(value,state.search))));
+  return db.transactions.filter(row=>(!state.warehouse||row.warehouse===state.warehouse)&&matchesMovement(row.type,state.type)&&(!state.search||[row.id,row.code,row.product,row.pack,row.truck,partyName(db,'transporter',row),partyName(db,'client',row),row.invoice,row.notes].some(value=>match(value,state.search))));
 }
-const decimalCols=new Set(['produced','weigh','expected','variance','accounting','out','balance']);
+const decimalCols=new Set(['delta','weightKg','produced','weigh','expected','variance','accounting','out','balance']);
 function displayValue(key,row) {
   const value=row[key];
   if(key==='transporter'||key==='client') return partyName(db,key,row);
   if(key==='warehouse') return warehouseName(db,value);
+  if(key==='loadType') return value==='bulk'?'Bulk (loose)':value==='bags'?'Bagged':null;
   if(key==='date') return dayText(value);
   if(key.endsWith('At')) return dateTime(value);
   return value;
@@ -233,7 +234,7 @@ function warehouseDetail(id) {
   const wh=db.warehouses.find(item=>item.id===id);
   const stock=records(db).filter(row=>row.warehouse===id);
   const tx=db.transactions.filter(row=>row.warehouse===id);
-  const groups=[['Recent receipts',['Stock Received','Return','Production']],['Recent dispatches',['Dispatch']],['Transfers in',['Transfer In']],['Transfers out',['Transfer Out']],['Stock adjustments',['Stock Adjustment','Stock Count Correction','Damaged Stock']]];
+  const groups=[['Recent receipts',['Stock Received','Return','Production']],['Recent dispatches',['Dispatch']],['Transfers in',['Transfer In']],['Transfers out',['Transfer Out']],['Repacking',['Repacking Out','Repacking In']],['Stock adjustments',['Stock Adjustment','Stock Count Correction','Damaged Stock']]];
   const groupHtml=groups.map(([label,types])=>{
     const rows=tx.filter(row=>row.status==='Completed'&&types.includes(row.type)).slice(0,10);
     return `<section class="panel detail-panel"><h3>${label}</h3>${rows.length?rows.map(row=>`<div class="detail-row" ${safeId(row.id,'key')}><span>${link(row.id,'tx-detail',safeId(row.id))}<span class="sub">${esc(row.product)}</span></span><strong>${row.delta>0?'+':''}${fmt(row.delta)} MT</strong><span>${dayText(row.date)}</span></div>`).join(''):'<p class="sub">No matching movements.</p>'}</section>`;
@@ -273,7 +274,7 @@ function reportData() {
       }
       inventory=[...snapshots.values()].filter(row=>row&&!row.archived).map(row=>({...row,asOf:end}));
     }
-    const linked=new Set(db.transactions.filter(tx=>range(tx.date)&&(!s.transporter||tx.transporterId===s.transporter)&&(!s.client||tx.clientId===s.client)&&(!s.movement||tx.type===s.movement)&&tx.status==='Completed').map(tx=>tx.code+'|'+tx.warehouse));
+    const linked=new Set(db.transactions.filter(tx=>range(tx.date)&&(!s.transporter||tx.transporterId===s.transporter)&&(!s.client||tx.clientId===s.client)&&matchesMovement(tx.type,s.movement)&&tx.status==='Completed').map(tx=>tx.code+'|'+tx.warehouse));
     const rows=inventory.filter(row=>base(row,stockStatus(row))&&
       (s.type==='Daily Stock Report'||range(getDay(row.updatedAt)))&&
       ((!s.transporter&&!s.client&&!s.movement)||linked.has(row.code+'|'+row.warehouse))&&
@@ -287,13 +288,13 @@ function reportData() {
     'Stock Adjustment Report':['Stock Adjustment','Stock Count Correction'],
   }[s.type];
   const rows=db.transactions.filter(tx=>(s.status||s.type==='Transaction Report'||tx.status==='Completed')&&base(tx,tx.status)&&range(tx.date)&&(!daily||s.start||s.end||tx.date===today())&&
-    (!s.transporter||tx.transporterId===s.transporter)&&(!s.client||tx.clientId===s.client)&&(!s.movement||tx.type===s.movement)&&
+    (!s.transporter||tx.transporterId===s.transporter)&&(!s.client||tx.clientId===s.client)&&matchesMovement(tx.type,s.movement)&&
     (!movementForReport||movementForReport.includes(tx.type))&&
     (s.type!=='Variance Report'||tx.variance!==null)&&(s.type!=='Transporter Report'||tx.transporterId)&&(s.type!=='Client Dispatch Report'||tx.clientId));
   const selection={
     'Daily Dispatch Report':['date','id','code','product','warehouse','truck','transporter','client','out','invoice','status'],
-    'Daily Receipt Report':['date','id','code','product','warehouse','truck','transporter','bags','accounting','grv','balance'],
-    'Stock Movement Report':['date','id','type','code','product','warehouse','accounting','out','balance','createdBy','notes'],
+    'Daily Receipt Report':['date','id','code','product','warehouse','truck','transporter','loadType','pack','bags','accounting','grv','balance'],
+    'Stock Movement Report':['date','id','type','code','product','warehouse','pack','bags','weightKg','delta','accounting','out','balance','createdBy','notes'],
     'Variance Report':['date','id','warehouse','truck','transporter','product','bags','expected','weigh','variance'],
     'Transporter Report':['date','id','transporter','truck','trailer1','trailer2','type','product','warehouse','accounting'],
     'Client Dispatch Report':['date','id','client','code','product','warehouse','transporter','out','invoice','delNote'],
@@ -557,7 +558,7 @@ function auditValue(value,kind) {
 function txEditor(fromHistory=null) {
   const item=fromHistory?stockAt(db,fromHistory.code,fromHistory.warehouse):null;
   if(fromHistory&&!item) return;
-  const materials=unique(records(db).map(row=>row.code)).map(code=>[code,`${code} · ${stockAtCode(code).product}`]);
+  const materials=transactionMaterials();
   openModal('New Transaction','Choose the movement and material first. Completed transactions update stock immediately.',
   `<form class="transaction-form" id="tx-form"><div class="form-grid three">
   ${field('Movement type',select('type',movements,'','Select movement type','required'))}
@@ -566,15 +567,20 @@ function txEditor(fromHistory=null) {
   ${field('Warehouse',select('warehouse',item?[[item.warehouse,warehouseName(db,item.warehouse)]]:[],item?.warehouse,'Select material first','required'))}
   <div id="other-warehouse" hidden>${field('Other warehouse',select('otherWarehouse',warehouseOptions(),'','Select warehouse'))}</div>
   ${field('Transaction date',input('date',today(),'date','required'))}
+  <div id="output-material" hidden>${field('Finished material code',select('outputCode',materials,'','Select finished material'),'Set up the smaller-bag material in Stock Management if it’s missing.')}</div>
   </div>
   <h3>Quantities and weights</h3><div class="form-grid three">
-  ${field('Number of bags',input('bags',0,'number','min="0" step="1" required'))}
-  ${field('Weight per bag (kg)',input('weightKg',calculate({},item).kg,'number','min="0.001" step="0.001" required'))}
+  ${field('Load type',select('loadType',[['bags','Bagged'],['bulk','Bulk (loose)']],'bags'))}
+  ${field('Number of bags',input('bags',0,'number','min="0" step="1"'))}
+  ${field('Weight per bag (kg)',input('weightKg',calculate({},item).kg,'number','min="0.001" step="0.001"'))}
   ${field('Weighbridge weight (MT)',input('weigh','','number','min="0" step="0.001"'))}
   ${field('Quantity produced (MT)',input('produced','','number','min="0" step="0.001"'))}
   ${field('Accounting weight (MT)',input('accounting','','number','min="0" step="0.001" placeholder="Calculated by default"'))}
+  ${field('Number of finished bags',input('outputBags','','number','min="1" step="1"'))}
+  ${field('Weight per finished bag (kg)',input('outputKg','','number','min="0.001" step="0.001"'))}
   <div id="adjustment-field" hidden>${field('Signed adjustment (MT)',input('adjustment','','number','step="0.001" placeholder="Example −2.5 or 5"'))}</div>
   </div><div id="tx-calc" class="calc-grid"></div>
+  <div id="tx-transport">
   <h3>Transport and delivery</h3><div class="form-grid three">
   ${field('Truck',input('truck','','text','maxlength="30"'))}
   ${field('Trailer 1',input('trailer1','','text','maxlength="30"'))}
@@ -585,27 +591,46 @@ function txEditor(fromHistory=null) {
   ${field('Offloading point',input('offloading','','text','maxlength="100"'))}
   </div>
   <details><summary>Reference documents</summary><div class="form-grid three">${docFields.map(([key,label])=>field(label,input(key,'','text','maxlength="65"'))).join('')}</div></details>
+  </div>
   <div id="tx-notes">${field('Notes',textarea('notes','','maxlength="450"'))}</div>${statusBox}
   </form>`,modalButtons('Complete Transaction','tx-form'),true);
   transactionHistory=fromHistory;
+  const {elements}=document.getElementById('tx-form');
+  elements.type.value='';
+  elements.code.value=item?.code||'';
+  elements.warehouse.value=item?.warehouse||'';
   updateTransactionForm();
-  if(fromHistory) document.getElementById('tx-form').elements.type.focus();
+  if(fromHistory) elements.type.focus();
 }
 const stockAtCode=code=>records(db).find(row=>row.code===code);
+function transactionMaterials() {
+  return unique(records(db).map(row=>row.code)).map(code=>stockAtCode(code))
+    .map(({code,product,pack})=>[code,`${code} · ${product} · ${pack}`]);
+}
 function updateTransactionForm(changed) {
   const form=document.getElementById('tx-form');
   if(!form) return;
   const el=form.elements, type=el.type.value, code=el.code.value, transfer=isTransfer(type), adjustment=type==='Stock Adjustment'||type==='Stock Count Correction';
-  const item=stockAtCode(code);
+  const item=stockAtCode(code), repacking=type==='Repacking', bulkAvailable=canMoveBulk(type);
   if(!changed||changed==='code'||changed==='type') {
     const warehouse=el.warehouse.value;
     const whChoices=code?(canOpenStock(type)?warehouseOptions():warehouseOptions().filter(([id])=>stockAt(db,code,id))):[];
-    el.warehouse.innerHTML=options([['',code?'Select warehouse':'Select material first'],...whChoices],warehouse);
-    if(!el.warehouse.value&&whChoices.length===1) el.warehouse.value=whChoices[0][0];
+    el.warehouse.innerHTML=options([['',code?'Select warehouse':'Select material first'],...whChoices]);
+    el.warehouse.value=whChoices.some(([id])=>id===warehouse)?warehouse:whChoices.length===1?whChoices[0][0]:'';
     el.product.value=item?.product||'';
     if(changed==='code'&&item) el.weightKg.value=calculate({},item).kg;
+    el.loadType.value=bulkAvailable&&/\b(bulk|loose)\b/i.test(item?.pack||'')?'bulk':'bags';
+    const choices=transactionMaterials().filter(([id])=>id!==code&&!/\b(bulk|loose)\b/i.test(stockAtCode(id).pack));
+    const selected=changed?el.outputCode.value:'';
+    el.outputCode.innerHTML=options([['','Select finished material'],...choices]);
+    el.outputCode.value=choices.some(([id])=>id===selected)?selected:'';
   }
-  const receiving=type==='Transfer In';
+  if(!changed||['type','code','warehouse','outputCode'].includes(changed)) {
+    const target=stockAt(db,el.outputCode.value,el.warehouse.value)||stockAtCode(el.outputCode.value);
+    el.outputKg.value=packageKg(target)??'';
+  }
+  const receiving=type==='Transfer In', bulk=bulkAvailable&&el.loadType.value==='bulk';
+  el.code.parentElement.firstChild.nodeValue=repacking?'Source material code':'Material code';
   const other=document.getElementById('other-warehouse');
   other.hidden=!transfer;
   el.otherWarehouse.required=transfer;
@@ -614,10 +639,32 @@ function updateTransactionForm(changed) {
     other.querySelector('label').firstChild.nodeValue=receiving?'Sending warehouse':'Receiving warehouse';
     const current=el.otherWarehouse.value;
     const choices=warehouseOptions().filter(([id])=>id!==el.warehouse.value&&(!receiving||stockAt(db,code,id)));
-    el.otherWarehouse.innerHTML=options([['','Select warehouse'],...choices],current);
-    if(!el.otherWarehouse.value&&receiving&&choices.length===1) el.otherWarehouse.value=choices[0][0];
+    el.otherWarehouse.innerHTML=options([['','Select warehouse'],...choices]);
+    el.otherWarehouse.value=choices.some(([id])=>id===current)?current:receiving&&choices.length===1?choices[0][0]:'';
   } else el.warehouse.parentElement.firstChild.nodeValue='Warehouse';
+  const showField=(name,show,required=false)=>{
+    const control=el[name];
+    control.closest('label').hidden=!show;
+    control.disabled=!show;
+    control.required=show&&required;
+  };
+  showField('loadType',bulkAvailable);
+  showField('bags',!bulk&&!repacking,true);
+  showField('weightKg',!bulk&&!repacking,true);
+  showField('weigh',!repacking,bulk);
+  el.weigh.min=bulk?'0.001':'0';
+  el.weigh.parentElement.firstChild.nodeValue=bulk?'Net weighbridge weight (MT)':'Weighbridge weight (MT)';
+  for(const name of ['produced','accounting']) showField(name,!bulk&&!repacking);
+  showField('outputBags',repacking,true);
+  showField('outputKg',repacking,true);
+  document.getElementById('output-material').hidden=!repacking;
+  el.outputCode.disabled=!repacking;
+  el.outputCode.required=repacking;
+  const transport=document.getElementById('tx-transport');
+  transport.hidden=repacking;
+  for(const control of transport.querySelectorAll('input,select')) control.disabled=repacking;
   document.getElementById('adjustment-field').hidden=!adjustment;
+  el.adjustment.disabled=!adjustment;
   el.adjustment.required=adjustment;
   el.notes.required=adjustment;
   document.querySelector('#tx-notes label').firstChild.nodeValue=adjustment?'Reason for adjustment':'Notes';
@@ -626,11 +673,23 @@ function updateTransactionForm(changed) {
   const source=receiving?el.otherWarehouse.value:el.warehouse.value;
   const base=stockAt(db,code,source);
   const subject=stockAt(db,code,el.warehouse.value);
-  const needed=receiving?calc.delta:calc.delta<0?-calc.delta:0;
-  const variance=calc.variance===null?'—':badge(fmt(calc.variance)+' MT',varianceTone(db,calc.variance));
-  document.getElementById('tx-calc').innerHTML=
-  `<div><span class="sub">Expected weight</span><b>${fmt(calc.expected)} MT</b></div><div><span class="sub">Variance</span><b>${variance}</b></div><div><span class="sub">Accounting weight</span><b>${fmt(adjustment?Math.abs(calc.delta):calc.accounting)} MT</b></div><div><span class="sub">Resulting balance</span><b>${el.warehouse.value&&code?fmt(round((subject?.balance||0)+calc.delta))+' MT':'—'}</b></div>`;
-  if(base&&needed>base.balance) formStatus(`${warehouseName(db,base.warehouse)} has ${fmt(base.balance)} MT available. The requested quantity is ${fmt(needed)} MT.`,'warn');
+  const repacked=repacking?repackWeight(values):0;
+  const needed=repacking?repacked:receiving?calc.delta:Math.max(0,-calc.delta);
+  const summary=document.getElementById('tx-calc');
+  const metric=(label,value)=>`<div><span class="sub">${label}</span><b>${value}</b></div>`;
+  const weight=amount=>Number.isFinite(amount)?`${fmt(amount)} MT`:'—';
+  if(repacking) {
+    const target=stockAt(db,el.outputCode.value,el.warehouse.value);
+    summary.innerHTML=metric('Weight moved to finished bags',weight(repacked))+
+      metric('Source balance after repacking',subject?weight(round(subject.balance-repacked)):'—')+
+      metric('Finished balance after repacking',el.outputCode.value&&el.warehouse.value?weight(round((target?.balance||0)+repacked)):'—');
+  } else {
+    const variance=calc.variance===null?'—':badge(weight(calc.variance),varianceTone(db,calc.variance));
+    const balances=metric('Accounting weight',weight(adjustment?Math.abs(calc.delta):calc.accounting))+
+      metric('Resulting balance',el.warehouse.value&&code?weight(round((subject?.balance||0)+calc.delta)):'—');
+    summary.innerHTML=(bulk?'':metric('Expected weight',weight(calc.expected))+metric('Variance',variance))+balances;
+  }
+  if(base&&needed>base.balance) formStatus(`${warehouseName(db,base.warehouse)} has ${weight(base.balance)} available. The requested quantity is ${weight(needed)}.`,'warn');
   else formStatus('');
 }
 function txDetail(id) {
@@ -643,14 +702,15 @@ function txDetail(id) {
 function txDetailsEditor(id) {
   const tx=db.transactions.find(row=>row.id===id&&row.status==='Completed');
   if(!tx) return;
-  const fields=[['truck','Truck'],['trailer1','Trailer 1'],['trailer2','Trailer 2']];
-  if(!isTransfer(tx.type)) fields.push(['loading','Loading point'],['offloading','Offloading point']);
+  const repacking=isRepacking(tx.type);
+  const fields=repacking?[]:[['truck','Truck'],['trailer1','Trailer 1'],['trailer2','Trailer 2']];
+  if(!isTransfer(tx.type)&&!isRepacking(tx.type)) fields.push(['loading','Loading point'],['offloading','Offloading point']);
   const partyOptions=kind=>sortedDirectory(kind,true).filter(entry=>!entry.archived||entry.id===tx[kind+'Id']).map(({id,name})=>[id,name]);
   openModal('Edit Transaction Details',id,
     `<form id="tx-details-form" class="form-grid" ${safeId(id)} ${safeId(tx.rev,'rev')}>
     ${fields.map(([key,label])=>field(label,input(key,tx[key],'text','maxlength="100"'))).join('')}
-    ${['transporter','client'].map(kind=>field(directoryKinds[kind],select(kind+'Id',partyOptions(kind),tx[kind+'Id'],`Select ${kind}`))).join('')}
-    ${docFields.map(([key,label])=>field(label,input(key,tx[key],'text','maxlength="65"'))).join('')}
+    ${(repacking?[]:['transporter','client']).map(kind=>field(directoryKinds[kind],select(kind+'Id',partyOptions(kind),tx[kind+'Id'],`Select ${kind}`))).join('')}
+    ${(repacking?[]:docFields).map(([key,label])=>field(label,input(key,tx[key],'text','maxlength="65"'))).join('')}
     <div class="full">${field('Notes',textarea('notes',tx.notes,'maxlength="450"'))}</div>${statusBox}</form>`,modalButtons('Save Details','tx-details-form'));
 }
 function txVoidPrompt(id) {
@@ -658,7 +718,7 @@ function txVoidPrompt(id) {
   if(!tx) return;
   openModal('Void Transaction',`${id} · ${tx.product}`,
     `<form id="tx-void-form" class="form-grid" ${safeId(id)} ${safeId(tx.rev,'rev')}>
-    <p class="flash warn full">Voiding reverses the stock movement and keeps the transaction in the register. If this is a transfer, both sides will be reversed.</p>
+    <p class="flash warn full">Voiding reverses the stock movement and keeps it in the register. ${isRepacking(tx.type)||isTransfer(tx.type)?'Both linked movements will be reversed together.':''}</p>
     <div class="full">${field('Reason',textarea('reason','','required maxlength="450"'))}</div>${statusBox}</form>`,modalButtons('Void Transaction','tx-void-form'));
 }
 function settings() {
@@ -807,7 +867,7 @@ async function submit(event) {
       closeDialog();
     } else if(form.id==='tx-form') {
       const returnToHistory=Boolean(transactionHistory);
-      const message=rows=>rows.length>1?'Transfer completed. Both warehouse balances were updated.':`${rows[0].id} completed. Stock balance updated.`;
+      const message=rows=>isRepacking(rows[0].type)?'Repacking completed. Both material balances were updated.':rows.length>1?'Transfer completed. Both warehouse balances were updated.':`${rows[0].id} completed. Stock balance updated.`;
       const rows=await commit(latest=>saveTransaction(latest,values),returnToHistory?null:message);
       if(form.isConnected) closeDialog(returnToHistory?message(rows):'');
     } else if(form.id==='tx-details-form'||form.id==='tx-void-form') {
