@@ -608,7 +608,7 @@ function depotOrdersPage() {
     ['heaviest','Highest tonnage'],['lightest','Lowest tonnage']];
   return pageHead('Depot Orders',assignedDepot?esc(assignedDepot)+' · Your order history':'Orders submitted by depot supervisors.',
     canPlaceDepotOrder()?button('New Depot Order','plus','depot-new',{primary:true}):'')+
-    `<div class="toolbar">
+    `<div class="toolbar depot-order-filters">
       ${searchBox(scope,'Search orders, depots, submitters or items',filters.search)}
       ${assignedDepot?'':filterSelect(scope,'Depot','depot',unique(orders.map(order=>order.depot)),filters.depot)}
       ${filterSelect(scope,'Status','status',depotStatuses,filters.status)}
@@ -781,9 +781,11 @@ function depotOrderDetail(id) {
   const actions=isFullAccess()?button('Print','report','depot-print',{data})+
     button('Save PDF','download','depot-pdf',{data})+button('Edit',null,'depot-edit',{data})+
     button('Delete',null,'depot-delete',{data}):'';
-  const statusForm=canChangeDepotStatus()?`<form id="depot-status-form" ${data} ${safeId(order.status,'status')}>
-    ${field('Order status',select('status',depotStatuses,order.status))}
-    <button class="btn primary" type="submit">Update status</button>${statusBox}</form>`:'';
+  const canReceive=role==='depot_only'&&order.status==='sent';
+  const statusChoices=canReceive?[['received','Received']]:depotStatuses;
+  const statusForm=(canReceive||canChangeDepotStatus())?`<form id="depot-status-form" ${data} ${safeId(order.status,'status')}>
+    ${field('Order status',select('status',statusChoices,canReceive?'received':order.status))}
+    <button class="btn primary" type="submit">${canReceive?'Mark as received':'Update status'}</button>${statusBox}</form>`:'';
   openModal('Depot Order','',depotOrderDocument(order)+statusForm,button('Close',null,'close')+actions,true);
 }
 
@@ -791,9 +793,10 @@ dialog.addEventListener('submit',async event=>{
   const form=event.target;
   if(form.id!=='depot-status-form') return;
   event.preventDefault();
-  if(!canChangeDepotStatus()||event.submitter.disabled) return;
   const {id,status}=form.dataset;
   const next=new FormData(form).get('status');
+  const receiving=role==='depot_only'&&status==='sent'&&next==='received';
+  if((!receiving&&!canChangeDepotStatus())||!event.submitter||event.submitter.disabled) return;
   if(next===status) return;
   event.submitter.disabled=true;
   const generation=workspaceGeneration;

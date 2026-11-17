@@ -21,7 +21,7 @@ on conflict (user_id) do update set access_role = excluded.access_role;
 | --- | --- | --- |
 | Full Access (`full_access`) | View and manage | View all, create, edit, delete, update status, print and save PDF |
 | View Only (`view_only`) | View | View all |
-| Depot Only (`depot_only`) | — | Create orders for assigned depot and view own orders |
+| Depot Only (`depot_only`) | — | Create orders for assigned depot, view own orders, and mark own sent orders received |
 | Depot Manager (`depot_manager`) | View | View all and update status |
 | Stock Manager (`stock_manager`) | View and manage | View all |
 

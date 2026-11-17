@@ -235,3 +235,27 @@ details .form-grid{margin-top:10px}
 .select-search-options [role=option]{cursor:pointer}
 .select-search-options [role=option]:hover,.select-search-options .is-active{background:#e8f1fc;color:#142d57}
 .select-search-options [aria-selected=true]{font-weight:700}
+
+/* Keep page controls inside the content column and tables inside their scroll areas. */
+.sidebar{overflow-y:auto}
+.page-head>*,.panel-head>*,.report-tools>*,.table-foot>*,.modal-head>*,.modal-content>*{min-width:0}
+.page-head h1,.panel-head h2,.modal-head h2,.field{overflow-wrap:anywhere}
+.table-wrap{max-width:100%}
+.crumb{min-width:0}
+#crumb-page{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.top-right{flex:none}
+.depot-order-filters{align-items:end;gap:12px;margin-bottom:16px;padding:12px;border:1px solid var(--border);border-radius:9px;background:var(--surface)}
+.depot-order-filters>.field{flex:1 1 110px}
+.depot-order-filters>.search{flex:2 1 235px;min-width:0}
+#depot-status-form{display:flex;flex-wrap:wrap;align-items:end;gap:10px}
+#depot-status-form .field{flex:1 1 160px;max-width:260px}
+#depot-status-form .flash{flex-basis:100%}
+@media(max-width:750px){
+  .report-tools .toolbar{width:100%}
+}
+@media(max-width:480px){
+  .depot-order-filters>.search{flex-basis:100%;max-width:none}
+  .depot-order-filters>.field{flex-basis:calc(50% - 6px)}
+  .topbar{gap:8px}
+  .crumb,.top-right{gap:6px}
+}
