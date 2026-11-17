@@ -47,7 +47,7 @@ let role='';
 let assignedDepot='', orders=[], catalog=[], depotOrderRequest='';
 const isFullAccess=()=>role==='full_access';
 const canWrite=()=>isFullAccess()||role==='stock_manager';
-const canSeeStock=(access=role)=>['full_access','view_only','stock_manager'].includes(access);
+const canSeeStock=(access=role)=>['full_access','view_only','stock_manager','depot_manager'].includes(access);
 const canChangeDepotStatus=()=>isFullAccess()||role==='depot_manager';
 const canPlaceDepotOrder=()=>isFullAccess()||(role==='depot_only'&&Boolean(assignedDepot));
 const roleLabels={full_access:'Full Access',view_only:'View Only',depot_only:'Depot Only',depot_manager:'Depot Manager',stock_manager:'Stock Manager'};

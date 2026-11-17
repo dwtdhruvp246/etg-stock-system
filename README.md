@@ -22,7 +22,7 @@ on conflict (user_id) do update set access_role = excluded.access_role;
 | Full Access (`full_access`) | View and manage | View all, create, edit, delete, update status, print and save PDF |
 | View Only (`view_only`) | View | View all |
 | Depot Only (`depot_only`) | — | Create orders for assigned depot and view own orders |
-| Depot Manager (`depot_manager`) | — | View all and update status |
+| Depot Manager (`depot_manager`) | View | View all and update status |
 | Stock Manager (`stock_manager`) | View and manage | View all |
 
 Remove both the user's role and any depot assignment to revoke app access.
