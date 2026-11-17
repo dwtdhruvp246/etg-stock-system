@@ -52,9 +52,7 @@ function checked(result) {
 
 export async function accessRole() {
   const data=checked(await client.from('etg_stock_users').select('access_role').maybeSingle());
-  const role=data?.access_role;
-  if(role!=='full_access'&&role!=='view_only') throw new AccessError('This account has no access to the stock workspace. Ask your administrator to assign a role.');
-  return role;
+  return data?.access_role;
 }
 
 const unpack=row=>({...row.data,revision:String(row.version)});
@@ -79,7 +77,7 @@ export async function writeStock(mutator) {
     if(response.status===0) throw Error('The connection dropped while saving. Check the record before trying again.');
     const row=checked(response);
     if(row) return {db:unpack(row),result};
-    if(await accessRole()!=='full_access') throw new AccessError('This account has view-only access.');
+    if(!['full_access','stock_manager'].includes(await accessRole())) throw new AccessError('This account has view-only access.');
   }
   throw Error('Another user saved changes at the same time. Review the latest record and try again.');
 }
@@ -101,7 +99,7 @@ export async function fetchDepotCatalog() {
 export async function fetchDepotOrders() {
   const orders=[];
   for(let offset=0;;offset+=100) {
-    const page=checked(await client.from('depot_orders').select('id,order_number,depot,submitted_by,created_at,lines,total_mt')
+    const page=checked(await client.from('depot_orders').select('id,order_number,depot,submitted_by,created_at,lines,total_mt,status,status_changed_at')
       .order('order_number',{ascending:false}).range(offset,offset+99));
     orders.push(...page);
     if(page.length<100) return orders;
@@ -110,4 +108,18 @@ export async function fetchDepotOrders() {
 
 export async function submitDepotOrder(requestId,lines) {
   return checked(await client.rpc('submit_depot_order',{request_id:requestId,requested_lines:lines}));
+}
+
+export async function saveManagedDepotOrder(requestId,lines,depot,edit) {
+  return checked(await client.rpc('save_managed_depot_order',{
+    request_id:requestId,requested_lines:lines,requested_depot:depot,edit_order:edit,
+  }));
+}
+
+export async function changeDepotOrderStatus(id,expectedStatus,status) {
+  checked(await client.rpc('change_depot_order_status',{order_id:id,expected_status:expectedStatus,new_status:status}));
+}
+
+export async function deleteDepotOrder(id) {
+  checked(await client.rpc('delete_depot_order',{order_id:id}));
 }

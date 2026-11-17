@@ -9,7 +9,7 @@ The static app in `dist/` uses Supabase Auth and the Supabase Data API. The data
 1. Apply the SQL files in [supabase/migrations](supabase/migrations) in timestamp order. They create the stock tables, access policies and movement validation.
 2. In **Authentication → Sign In / Providers**, switch off **Allow new users to sign up** and anonymous sign-ins. Keep the email/password provider enabled.
 3. Under **Authentication → Users**, create the user manually with an email and password. Copy the user's ID.
-4. In SQL Editor, assign the user one role. Replace the example UUID and set `full_access` or `view_only`.
+4. In SQL Editor, assign the user one role. Replace the example UUID and select the role from the table below.
 
 ```sql
 insert into public.etg_stock_users (user_id, access_role)
@@ -17,7 +17,15 @@ values ('00000000-0000-0000-0000-000000000000', 'full_access')
 on conflict (user_id) do update set access_role = excluded.access_role;
 ```
 
-**Full Access** allows adding and editing stock, recording and voiding movements, managing warehouses and contacts, and importing and exporting. **View Only** allows viewing records, reports and history. Accounts without an ETG role have no ETG database access. Remove a user's role row to revoke access.
+| Role | Stock workspace | Depot orders |
+| --- | --- | --- |
+| Full Access (`full_access`) | View and manage | View all, create, edit, delete, update status, print and save PDF |
+| View Only (`view_only`) | View | View all |
+| Depot Only (`depot_only`) | — | Create orders for assigned depot and view own orders |
+| Depot Manager (`depot_manager`) | — | View all and update status |
+| Stock Manager (`stock_manager`) | View and manage | View all |
+
+Remove both the user's role and any depot assignment to revoke app access.
 
 Add warehouses first, then stock, clients and transporters. Removing stock or a directory entry uses archiving. Voiding a movement reverses its balance and keeps the original entry in the register. Correct posted quantities by voiding and re-entering the movement.
 
@@ -28,7 +36,7 @@ Add warehouses first, then stock, clients and transporters. Removing stock or a 
 
 ## Depot orders
 
-Create each supervisor under **Authentication → Users**, then assign their depot in SQL Editor using their Auth user ID:
+Create each supervisor under **Authentication → Users**, assign the `depot_only` role above, then set their depot in SQL Editor using their Auth user ID.
 
 ```sql
 insert into public.depot_supervisors (user_id, depot)
@@ -36,7 +44,7 @@ values ('00000000-0000-0000-0000-000000000000', 'Depot name')
 on conflict (user_id) do update set depot = excluded.depot;
 ```
 
-A depot assignment limits the account to its own orders and the ordering catalog. Remove any stock role from a supervisor account so removing their depot assignment cannot restore staff access. Orders retain the original depot, submitter, and item details. Full Access users can open any order under **Depot Orders** and select **Print** or **Save PDF**. Orders request products and do not move warehouse stock.
+Depot Only users can see their own orders and the product catalog. An explicit app role takes precedence over a depot assignment. Orders use the server submission timestamp and display it in Central Africa Time. Orders start as **Pending**. Full Access and Depot Manager can change the status to **Preparing**, **Sent**, or **Received**, or correct a status. Full Access can print and save orders as PDFs from the order detail. Order changes leave warehouse balances alone.
 
 ## Hosting
 
