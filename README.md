@@ -26,6 +26,18 @@ Add warehouses first, then stock, clients and transporters. Removing stock or a 
 - **Production.** Select the finished product, warehouse and raw materials used, then enter the finished weight. The app records loss as total raw material weight minus finished weight. Choose warehouse stock to add the finished product, or direct dispatch and enter a customer and truck registration to send it out without increasing warehouse stock.
 - **Repacking.** Set up separate material codes for the source packaging and the finished bags in Stock Management. Choose **Repacking**, select the warehouse and both codes, then enter the number and weight of the finished bags. The same tonnage is deducted from the source and added to the finished material. Both entries appear under **Repacking** in the Transaction Register and Stock Movement Report.
 
+## Depot orders
+
+Create each supervisor under **Authentication → Users**, then assign their depot in SQL Editor using their Auth user ID:
+
+```sql
+insert into public.depot_supervisors (user_id, depot)
+values ('00000000-0000-0000-0000-000000000000', 'Depot name')
+on conflict (user_id) do update set depot = excluded.depot;
+```
+
+A depot assignment limits the account to its own orders and the ordering catalog. Remove any stock role from a supervisor account so removing their depot assignment cannot restore staff access. Orders retain the original depot, submitter, and item details. Full Access users can open any order under **Depot Orders** and select **Print** or **Save PDF**. Orders request products and do not move warehouse stock.
+
 ## Hosting
 
 Serve `dist/` over HTTPS. The project is set in `dist/supabase-config.js`. Use only a browser publishable or legacy anon key in this file. If the host uses a separate sharing gate, staff also need access through the host.

@@ -1,5 +1,5 @@
 import {zone,operator,warehouseName,partyName,directoryKinds,statuses,movements,cols,docFields,stockCols,today,stamp,round,numeric,nonNegative,isLow,isOut,stockStatus,records,stockAt,isTransfer,isRepacking,isProductionBatch,matchesMovement,canMoveBulk,canOpenStock,packageKg,repackWeight,calculate,varianceTone,saveStock,saveTransaction,saveDirectoryEntry,archiveDirectoryEntry,updateTransactionDetails,voidTransaction,audit,uid,setOperator,emptyStockState} from './model.js';
-import {AccessError,account,restoreSession,signIn,signOut,accessRole,fetchStock,writeStock} from './backend.js';
+import {AccessError,account,restoreSession,signIn,signOut,accessRole,fetchStock,writeStock,depotAssignment,fetchDepotCatalog,fetchDepotOrders,submitDepotOrder} from './backend.js';
 import {readTable,makeCsv,makeSheet,makePdf,download} from './files.js';
 
 const icons={
@@ -43,6 +43,7 @@ const total=rows=>round(rows.reduce((sum,row)=>sum+row.balance,0));
 const match=(value,query)=>String(value??'').toLowerCase().includes(String(query??'').trim().toLowerCase());
 const unique=values=>[...new Set(values.filter(Boolean))].sort((a,b)=>a.localeCompare(b));
 let role='';
+let assignedDepot='', orders=[], catalog=[], depotOrderRequest='';
 const canWrite=()=>role==='full_access';
 const editorActions=new Set(['import','confirm-import','template','new-stock','edit-stock','archive-ask','directory-editor','directory-archive','new-tx','history-tx','variance-settings','tx-edit','tx-void','export-stock','export-tx','report-export']);
 const allowedAction=action=>!editorActions.has(action)||canWrite();
@@ -69,6 +70,8 @@ const pageList=[
   ['dashboard','Dashboard','dashboard'],['stock','Stock Management','box'],['transactions','Transactions','swap'],
   ['warehouses','Warehouses','warehouse'],['contacts','Contacts','contacts'],['reports','Reports','report'],
 ];
+const orderPage=['depot-orders','Depot Orders','report'];
+const visiblePages=()=>role==='depot_supervisor'?[orderPage]:canWrite()?[...pageList,orderPage]:pageList;
 const movementTones={
   'Stock Received':['inbound','green'],'Dispatch':['outbound','blue'],'Production':['layers','purple'],
   'Transfer Out':['swap','teal'],'Transfer In':['swap','teal'],'Repacking Out':['box','purple'],'Repacking In':['box','purple'],'Return':['inbound','green'],
@@ -331,10 +334,10 @@ function exportData(title,columns,rows,format) {
   toast(`Exported ${rows.length} ${rows.length===1?'record':'records'}.`);
 }
 
-const routeBody={dashboard,stock:stockPage,transactions:transactionsPage,warehouses:warehousesPage,contacts:contactsPage,reports:reportsPage};
+const routeBody={dashboard,stock:stockPage,transactions:transactionsPage,warehouses:warehousesPage,contacts:contactsPage,reports:reportsPage,'depot-orders':depotOrdersPage};
 function readRoute() {
   const [name,param]=location.hash.slice(1).split('/');
-  route=Object.hasOwn(routeBody,name)?name:'dashboard';
+  route=visiblePages().some(([id])=>id===name)?name:visiblePages()[0][0];
   activeWarehouse=route==='warehouses'&&db.warehouses.some(wh=>wh.id===param)?param:'';
 }
 function go(page,param='') {
@@ -348,8 +351,8 @@ function render(force=false) {
   const key=route+'/'+activeWarehouse;
   if(force||stableView!==key) {
     stableView=key;
-    nav.innerHTML=pageList.map(([id,label,glyph])=>`<a href="#${id}" class="nav-link${route===id?' active':''}" ${route===id?'aria-current="page"':''}>${icon(glyph)}${label}<span class="nav-arrow">${icon('chevron-right')}</span></a>`).join('');
-    document.getElementById('crumb-page').textContent=pageList.find(([id])=>id===route)[1];
+    nav.innerHTML=visiblePages().map(([id,label,glyph])=>`<a href="#${id}" class="nav-link${route===id?' active':''}" ${route===id?'aria-current="page"':''}>${icon(glyph)}${label}<span class="nav-arrow">${icon('chevron-right')}</span></a>`).join('');
+    document.getElementById('crumb-page').textContent=visiblePages().find(([id])=>id===route)[1];
     main.innerHTML=routeBody[route]();
     return;
   }
@@ -396,6 +399,7 @@ function syncOptions(el,choices,value,placeholder) {
 }
 function refreshParts() {
   if(!role) return;
+  if(route==='depot-orders') return;
   if(route==='stock'||route==='transactions'||route==='reports') {
     const id=route+'-body';
     const next=fragment(`<div id="${id}">${{stock:stockBody,transactions:txBody,reports:reportBody}[route]()}</div>`).firstElementChild;
@@ -555,6 +559,178 @@ function auditValue(value,kind) {
   if(kind==='Transaction') return `${esc(value.type)} <span class="sub">${fmt(value.delta)} MT</span>`;
   return `<details class="audit-values"><summary>${fmt(value.balance)} MT · ${esc(value.archived?'Archived':stockStatus(value))}</summary><div class="sub">${esc(value.code)} · ${esc(value.product)}<br>${esc(value.sap)} · ${esc(value.pack)}<br>${esc(warehouseName(db,value.warehouse))}${value.comment?'<br>'+esc(value.comment):''}</div></details>`;
 }
+const depotColumns=[
+  ['product','Item'],['code','Material Code'],['pack','Packaging Type'],['quantity','Quantity'],
+  ['mt','MT'],['average_sales','Average Sales (Daily)'],['system_stock','System Stock (QTY)'],['physical_stock','Physical Stock'],
+];
+const depotOrderNumber=order=>'DO-'+String(order.order_number).padStart(5,'0');
+
+function depotOrderRows() {
+  return orders.map(order=>`<tr><td>${link(depotOrderNumber(order),'depot-detail',safeId(order.id))}</td>
+    <td>${esc(order.depot)}</td><td>${esc(dateTime(order.created_at))}</td><td>${esc(order.submitted_by)}</td>
+    <td class="t-number">${fmt(order.total_mt)} MT</td><td>${button('View',null,'depot-detail',{data:safeId(order.id)})}</td></tr>`).join('')||empty(6,'No depot orders have been placed yet.');
+}
+
+function depotOrdersPage() {
+  return pageHead('Depot Orders',assignedDepot?esc(assignedDepot)+' · Your order history':'Orders submitted by depot supervisors.',
+    assignedDepot?button('New Depot Order','plus','depot-new',{primary:true}):'')+
+    `<div class="table-wrap" tabindex="0"><table><thead><tr><th>Order</th><th>Depot</th><th>Submitted</th><th>Placed by</th><th>Total tonnage</th><th>Action</th></tr></thead><tbody id="depot-orders-body">${depotOrderRows()}</tbody></table></div>`;
+}
+
+const depotOrderRow=()=>`<section class="depot-entry">
+  <div class="form-grid three">
+    ${field('Item',select('item',catalog.map((item,index)=>[index,`${item.product} · ${item.code} · ${item.pack}`]),'','Select item','required'))}
+    ${field('Material Code',input('code','','text','readonly'))}
+    ${field('Packaging Type',input('pack','','text','readonly'))}
+    ${field('Quantity',input('quantity','','number','required min="0.001" step="0.001" max="1000000000"'))}
+    ${field('MT',input('mt','','number','required min="0.001" step="0.001" max="1000000000"'))}
+    ${field('Average Sales (Daily)',input('average_sales','','number','required min="0" step="0.001" max="1000000000"'))}
+    ${field('System Stock (QTY)',input('system_stock','','number','required min="0" step="0.001" max="1000000000"'))}
+    ${field('Physical Stock',input('physical_stock','','number','required min="0" step="0.001" max="1000000000"'))}
+  </div>
+  <button type="button" class="btn" data-depot-row="remove">Remove item</button>
+</section>`;
+
+async function depotOrderEditor() {
+  if(!assignedDepot) return;
+  const generation=workspaceGeneration;
+  const depot=assignedDepot;
+  openModal('New Depot Order',depot,'<p role="status">Loading items…</p>');
+  const itemRequest=dialog.querySelector('[role="status"]');
+  try {
+    const items=await fetchDepotCatalog();
+    if(generation!==workspaceGeneration||!itemRequest.isConnected||!dialog.open) return;
+    catalog=items;
+    depotOrderRequest=uid();
+    if(!catalog.length) {
+      itemRequest.textContent='The stock catalog has no active items to order.';
+      return;
+    }
+    openModal('New Depot Order',depot,`<form id="depot-order-form">
+      <p class="sub">Enter daily sales and both stock counts using the same unit as the order quantity. MT is calculated when the packaging specifies a weight in kg.</p>
+      <div id="depot-order-lines">${depotOrderRow()}</div>
+      <button type="button" class="btn" data-depot-row="add">Add item</button>
+      <p class="depot-total">Total tonnage <strong id="depot-total">0.00 MT</strong></p>${statusBox}
+    </form>`,modalButtons('Place Order','depot-order-form'),true);
+    dialog.querySelector('[name="item"]').value='';
+  } catch(error) {
+    if(itemRequest.isConnected) itemRequest.textContent=error.message;
+  }
+}
+
+function updateDepotTotal(changed) {
+  const form=document.getElementById('depot-order-form');
+  if(!form) return;
+  const row=changed?.closest('.depot-entry');
+  if(row) {
+    const itemIndex=row.querySelector('[name="item"]').value;
+    const item=itemIndex===''?null:catalog[Number(itemIndex)];
+    const field=name=>row.querySelector(`[name="${name}"]`);
+    field('code').value=item?.code||'';
+    field('pack').value=item?.pack||'';
+    const kg=Number(item?.pack.match(/([0-9]+(?:\.[0-9]+)?)\s*kg\b/i)?.[1]||0);
+    const weight=field('mt');
+    weight.readOnly=kg>0;
+    if(kg>0) weight.value=round(Number(field('quantity').value)*kg/1000);
+    else if(changed.name==='item') weight.value='';
+  }
+  const total=[...form.querySelectorAll('[name="mt"]')].reduce((sum,input)=>sum+Number(input.value),0);
+  document.getElementById('depot-total').textContent=fmt(round(total))+' MT';
+}
+
+dialog.addEventListener('click',event=>{
+  const button=event.target.closest('[data-depot-row]');
+  const list=document.getElementById('depot-order-lines');
+  if(!assignedDepot||!button||!list) return;
+  if(button.dataset.depotRow==='add'&&list.children.length<100) {
+    list.insertAdjacentHTML('beforeend',depotOrderRow());
+    list.lastElementChild.querySelector('[name="item"]').value='';
+    list.lastElementChild.querySelector('[name="item"]').focus();
+  } else if(button.dataset.depotRow==='remove'&&list.children.length>1) {
+    button.closest('.depot-entry').remove();
+  }
+  updateDepotTotal();
+});
+for(const type of ['input','change']) dialog.addEventListener(type,event=>{
+  if(event.target.form?.id==='depot-order-form') updateDepotTotal(event.target);
+});
+
+dialog.addEventListener('submit',async event=>{
+  const form=event.target;
+  if(form.id!=='depot-order-form') return;
+  event.preventDefault();
+  const button=event.submitter;
+  if(!assignedDepot||!button||button.disabled) return;
+  const lines=[...form.querySelectorAll('.depot-entry')].map(row=>{
+    const read=name=>row.querySelector(`[name="${name}"]`).value;
+    const item=read('item');
+    if(item===''||!catalog[Number(item)]) return null;
+    const {code,pack}=catalog[Number(item)];
+    const numbers=Object.fromEntries(['quantity','mt','average_sales','system_stock','physical_stock']
+      .map(name=>[name,read(name)===''?NaN:Number(read(name))]));
+    return {code,pack,...numbers};
+  });
+  if(lines.some(line=>!line||!Object.values(line).slice(2).every(Number.isFinite)||line.quantity<=0||line.mt<=0)) {
+    formStatus('Select each item and enter all quantities and a positive weight.');
+    return;
+  }
+  if(new Set(lines.map(line=>JSON.stringify([line.code,line.pack]))).size!==lines.length) {
+    formStatus('Combine duplicate items on one line.');
+    return;
+  }
+  button.disabled=true;
+  const generation=workspaceGeneration;
+  try {
+    const id=await submitDepotOrder(depotOrderRequest,lines);
+    const history=await fetchDepotOrders();
+    if(generation!==workspaceGeneration) return;
+    orders=history;
+    render(true);
+    if(form.isConnected) depotOrderDetail(id);
+    toast('Depot order placed.');
+  } catch(error) {
+    if(form.isConnected) formStatus(error.message);
+  } finally {
+    button.disabled=false;
+  }
+});
+
+function depotOrderDocument(order) {
+  return `<div class="depot-document"><h2>${esc(order.depot)} · ${depotOrderNumber(order)}</h2>
+    <p>Placed by ${esc(order.submitted_by)} · ${esc(dateTime(order.created_at))}</p>
+    <div class="table-wrap"><table><thead><tr>${depotColumns.map(([,label])=>`<th>${esc(label)}</th>`).join('')}</tr></thead>
+    <tbody>${order.lines.map(line=>`<tr>${depotColumns.map(([key])=>`<td>${esc(typeof line[key]==='number'?fmt(line[key]):line[key])}</td>`).join('')}</tr>`).join('')}</tbody>
+    <tfoot><tr><th colspan="7">Total tonnage</th><td>${fmt(order.total_mt)} MT</td></tr></tfoot></table></div></div>`;
+}
+function depotOrderDetail(id) {
+  const order=orders.find(order=>order.id===id);
+  if(!order) return;
+  const actions=canWrite()?button('Print','report','depot-print',{data:safeId(id)})+
+    button('Save PDF','download','depot-pdf',{data:safeId(id),primary:true}):'';
+  openModal('Depot Order','',depotOrderDocument(order),button('Close',null,'close')+actions,true);
+}
+
+function exportDepotOrder(id,format) {
+  if(!canWrite()) return;
+  const order=orders.find(order=>order.id===id);
+  if(!order) return;
+  if(format==='print') {
+    const sheet=document.createElement('section');
+    sheet.id='depot-print-sheet';
+    sheet.innerHTML=depotOrderDocument(order);
+    document.body.append(sheet);
+    try {window.print();} finally {sheet.remove();}
+    return;
+  }
+  const rows=[
+    depotColumns.map(([,label])=>label),
+    ...order.lines.map(line=>depotColumns.map(([key])=>line[key])),
+    ['Total tonnage','','','',fmt(order.total_mt)+' MT'],
+  ];
+  const title=`${depotOrderNumber(order)} · ${order.depot}`;
+  download(makePdf(title,rows,{subtitle:`Placed by ${order.submitted_by} | ${dateTime(order.created_at)}`}),depotOrderNumber(order)+'.pdf');
+}
+
 function txEditor(fromHistory=null) {
   const item=fromHistory?stockAt(db,fromHistory.code,fromHistory.warehouse):null;
   if(fromHistory&&!item) return;
@@ -998,6 +1174,10 @@ const actions={
   'archive-ask':target=>archivePrompt(target.dataset.id),
   archived:archivedStock,
   'new-tx':()=>txEditor(),
+  'depot-new':()=>void depotOrderEditor(),
+  'depot-detail':target=>depotOrderDetail(target.dataset.id),
+  'depot-pdf':target=>exportDepotOrder(target.dataset.id,'pdf'),
+  'depot-print':target=>exportDepotOrder(target.dataset.id,'print'),
   'tx-detail':target=>txDetail(target.dataset.id),
   'tx-edit':target=>txDetailsEditor(target.dataset.id),
   'tx-void':target=>txVoidPrompt(target.dataset.id),
@@ -1032,7 +1212,7 @@ const actions={
 function delegated(event) {
   const target=event.target.closest('[data-action]');
   const action=target&&Object.hasOwn(actions,target.dataset.action)&&actions[target.dataset.action];
-  if(action&&role&&allowedAction(target.dataset.action)) action(target);
+  if(action&&role&&(role!=='depot_supervisor'||target.dataset.action==='close'||target.dataset.action.startsWith('depot-'))&&allowedAction(target.dataset.action)) action(target);
 }
 main.addEventListener('click',delegated);
 dialog.addEventListener('click',delegated);
@@ -1053,12 +1233,13 @@ function updateProfile() {
   document.getElementById('profile-email').textContent=email;
   document.getElementById('profile-email').title=email;
   document.getElementById('profile-initials').textContent=email.slice(0,2).toUpperCase();
-  document.getElementById('profile-role').textContent=canWrite()?'Full Access':'View Only';
+  document.getElementById('profile-role').textContent=assignedDepot?assignedDepot+' Supervisor':canWrite()?'Full Access':'View Only';
 }
 
 function clearWorkspace(message='') {
   workspaceGeneration++;
   role='';
+  assignedDepot=''; orders=[]; catalog=[]; depotOrderRequest='';
   connected=false;
   db=emptyStockState();
   setOperator('');
@@ -1073,8 +1254,16 @@ function clearWorkspace(message='') {
 }
 
 async function openWorkspace() {
-  const access=await accessRole();
-  const snapshot=await fetchStock();
+  const generation=workspaceGeneration;
+  const depot=await depotAssignment();
+  const access=depot?'depot_supervisor':await accessRole();
+  const [snapshot,history]=await Promise.all([
+    depot?emptyStockState():fetchStock(),
+    depot||access==='full_access'?fetchDepotOrders():[],
+  ]);
+  if(generation!==workspaceGeneration) return;
+  assignedDepot=depot;
+  orders=history;
   db=snapshot;
   role=access;
   connected=true;
@@ -1099,13 +1288,23 @@ async function synchronize() {
   const generation=workspaceGeneration;
   synchronizing=true;
   try {
-    const [access,latest]=await Promise.all([accessRole(),fetchStock(db.revision)]);
+    const depot=await depotAssignment();
+    const access=depot?'depot_supervisor':await accessRole();
     if(generation!==workspaceGeneration) return;
-    if(role!==access) {
-      role=access;
-      if(!canWrite()&&dialog.open) dialog.close();
-      updateProfile();
-      render(true);
+    if(access!==role||depot!==assignedDepot) {
+      if(dialog.open) dialog.close();
+      await openWorkspace();
+      return;
+    }
+    const [latest,history]=await Promise.all([
+      depot?null:fetchStock(db.revision),
+      depot||canWrite()?fetchDepotOrders():null,
+    ]);
+    if(generation!==workspaceGeneration) return;
+    if(history) {
+      orders=history;
+      const body=document.getElementById('depot-orders-body');
+      if(body) body.innerHTML=depotOrderRows();
     }
     if(latest) displayStockUpdate(latest);
     connected=true;

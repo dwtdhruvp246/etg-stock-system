@@ -177,28 +177,43 @@ export function makeCsv(rows) {
   return new Blob(['\uFEFF',csv],{type:'text/csv;charset=utf-8'});
 }
 const pdfText=value=>String(value??'').normalize('NFKD').replace(/[^\x20-\x7e]/g,' ').replace(/[\\()]/g,'\\$&');
-export function makePdf(title,rows) {
-  const pageWidth=842, pageHeight=595, perPage=26;
+export function makePdf(title,rows,{subtitle}={}) {
+  const pageWidth=842, pageHeight=595;
   const [head,...body]=rows;
   const objects=['','', '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>'];
   const pages=[];
   let number=0;
-  for(let row=0;row<Math.max(1,body.length);row+=perPage) {
-    for(let col=0;col<head.length;col+=9) {
-      const labels=head.slice(col,col+9), width=770/labels.length;
-      const draw=(value,x,y,size=8,font=3)=>`BT /F${font===4?'2':'1'} ${size} Tf ${x.toFixed(2)} ${y} Td (${pdfText(value)}) Tj ET\n`;
-      let content='0.10 0.16 0.27 rg\n'+draw(title,36,555,18,4)+draw(`Page ${++number} | ${body.length} records | Columns ${col+1}-${col+labels.length} of ${head.length}`,36,534,9);
-      content+='0.91 0.94 0.98 rg 36 507 770 20 re f\n0.10 0.16 0.27 rg\n';
-      const shorten=(value,len)=>String(value??'').length>len?String(value).slice(0,len-3)+'...':value;
-      const max=Math.floor(width/4.5)-2;
-      labels.forEach((label,i)=>{content+=draw(shorten(label,max),40+i*width,514,8,4);});
-      body.slice(row,row+perPage).forEach((record,j)=>{
-        if(j%2===0) content+=`0.97 0.98 1 rg 36 ${490-j*17} 770 17 re f\n0.10 0.16 0.27 rg\n`;
-        record.slice(col,col+labels.length).forEach((value,i)=>{content+=draw(shorten(value,max),40+i*width,496-j*17);});
-      });
+  for(let col=0;col<head.length;col+=9) {
+    const labels=head.slice(col,col+9), width=770/labels.length;
+    const max=Math.floor(width/4.5)-2;
+    const draw=(value,x,y,size=8,font=3)=>`BT /F${font===4?'2':'1'} ${size} Tf ${x.toFixed(2)} ${y} Td (${pdfText(value)}) Tj ET\n`;
+    const wrap=value=>{
+      const remaining=String(value??'').trim();
+      if(!subtitle) return [remaining.length>max?remaining.slice(0,max-3)+'...':remaining];
+      return remaining.match(new RegExp(`.{1,${max}}`,'gu'))||[''];
+    };
+    const cells=record=>record.slice(col,col+labels.length).map(wrap);
+    const height=lines=>Math.max(17,Math.max(1,...lines.map(parts=>parts.length))*10+6);
+    const drawCells=(lines,y,font)=>lines.map((parts,i)=>parts.map((part,j)=>draw(part,40+i*width,y-j*10,8,font)).join('')).join('');
+    let row=0;
+    do {
+      const heading=labels.map(wrap), headingHeight=height(heading);
+      let content='0.10 0.16 0.27 rg\n'+draw(title,36,555,18,4)+draw(subtitle||`Page ${number+1} | ${body.length} records | Columns ${col+1}-${col+labels.length} of ${head.length}`,36,534,9);
+      number++;
+      if(subtitle) content+=draw(`Page ${number}`,748,534,9);
+      content+=`0.91 0.94 0.98 rg 36 ${527-headingHeight} 770 ${headingHeight} re f\n0.10 0.16 0.27 rg\n`+drawCells(heading,514,4);
+      let y=527-headingHeight;
+      while(row<body.length) {
+        const lines=cells(body[row]), rowHeight=height(lines);
+        if(y-rowHeight<42&&y<527-headingHeight) break;
+        if(row%2===0) content+=`0.97 0.98 1 rg 36 ${y-rowHeight} 770 ${rowHeight} re f\n0.10 0.16 0.27 rg\n`;
+        content+=drawCells(lines,y-12,3);
+        y-=rowHeight;
+        row++;
+      }
       const stream=objects.push(`<< /Length ${content.length} >>\nstream\n${content}endstream`);
       pages.push(objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${stream} 0 R >>`));
-    }
+    } while(row<body.length);
   }
   objects[0]='<< /Type /Catalog /Pages 2 0 R >>';
   objects[1]=`<< /Type /Pages /Count ${pages.length} /Kids [${pages.map(page=>page+' 0 R').join(' ')}] >>`;

@@ -83,3 +83,31 @@ export async function writeStock(mutator) {
   }
   throw Error('Another user saved changes at the same time. Review the latest record and try again.');
 }
+
+export async function depotAssignment() {
+  const data=checked(await client.from('depot_supervisors').select('depot').maybeSingle());
+  return data?.depot||'';
+}
+
+export async function fetchDepotCatalog() {
+  const items=[];
+  for(let offset=0;;offset+=200) {
+    const page=checked(await client.rpc('depot_catalog').order('code').order('pack').range(offset,offset+199));
+    items.push(...page);
+    if(page.length<200) return items;
+  }
+}
+
+export async function fetchDepotOrders() {
+  const orders=[];
+  for(let offset=0;;offset+=100) {
+    const page=checked(await client.from('depot_orders').select('id,order_number,depot,submitted_by,created_at,lines,total_mt')
+      .order('order_number',{ascending:false}).range(offset,offset+99));
+    orders.push(...page);
+    if(page.length<100) return orders;
+  }
+}
+
+export async function submitDepotOrder(requestId,lines) {
+  return checked(await client.rpc('submit_depot_order',{request_id:requestId,requested_lines:lines}));
+}
