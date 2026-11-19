@@ -627,7 +627,7 @@ const depotOrderRow=()=>`<section class="depot-entry">
     ${field('Item',input('','','search','data-depot-item-search role="combobox" aria-autocomplete="list" aria-expanded="false" placeholder="Type item name or material code" autocomplete="off"')+
       select('item',catalog.map((item,index)=>[index,`${item.product} · ${item.code} · ${item.pack}`]),'','Select item','hidden'))}
     ${field('Material Code',input('code','','text','readonly'))}
-    ${field('Packaging Type',input('pack','','text','readonly'))}
+    ${field('Packaging Type (UOM)',input('pack','','text','maxlength="120" required'))}
     ${field('Quantity',input('quantity','','number','required min="0.001" step="0.001" max="1000000000"'))}
     ${field('MT',input('mt','','number','required min="0.001" step="0.001" max="1000000000"'))}
     ${field('Average Sales (Daily)',input('average_sales','','number','required min="0" step="0.001" max="1000000000"'))}
@@ -664,7 +664,8 @@ async function depotOrderEditor(order) {
       const search=setupDepotItemSearch(row);
       const line=order?.lines[index];
       if(!line) return;
-      const itemIndex=catalog.findIndex(item=>item.code===line.code&&item.pack===line.pack);
+      const exact=catalog.findIndex(item=>item.code===line.code&&item.pack===line.pack);
+      const itemIndex=exact>=0?exact:catalog.findIndex(item=>item.code===line.code);
       const item=row.querySelector('[name="item"]');
       if(itemIndex>=0) {
         item.value=String(itemIndex);
@@ -673,7 +674,8 @@ async function depotOrderEditor(order) {
       for(const name of ['quantity','average_sales','system_stock','physical_stock']) {
         row.querySelector(`[name="${name}"]`).value=line[name];
       }
-      updateDepotTotal(item);
+      row.querySelector('[name="pack"]').value=line.pack;
+      updateDepotTotal(row.querySelector('[name="pack"]'));
       row.querySelector('[name="mt"]').value=line.mt;
     });
     updateDepotTotal();
@@ -700,8 +702,8 @@ function updateDepotTotal(changed) {
     const item=itemIndex===''?null:catalog[Number(itemIndex)];
     const field=name=>row.querySelector(`[name="${name}"]`);
     field('code').value=item?.code||'';
-    field('pack').value=item?.pack||'';
-    const kg=Number(item?.pack.match(/([0-9]+(?:\.[0-9]+)?)\s*kg\b/i)?.[1]||0);
+    if(changed.name==='item') field('pack').value=item?.pack||'';
+    const kg=Number(field('pack').value.match(/([0-9]+(?:\.[0-9]+)?)\s*kg\b/i)?.[1]||0);
     const weight=field('mt');
     weight.readOnly=kg>0;
     if(kg>0) weight.value=round(Number(field('quantity').value)*kg/1000);
@@ -737,13 +739,14 @@ dialog.addEventListener('submit',async event=>{
     const read=name=>row.querySelector(`[name="${name}"]`).value;
     const item=read('item');
     if(item===''||!catalog[Number(item)]) return null;
-    const {code,pack}=catalog[Number(item)];
+    const {code}=catalog[Number(item)];
+    const pack=read('pack').trim();
     const numbers=Object.fromEntries(['quantity','mt','average_sales','system_stock','physical_stock']
       .map(name=>[name,read(name)===''?NaN:Number(read(name))]));
     return {code,pack,...numbers};
   });
-  if(lines.some(line=>!line||!Object.values(line).slice(2).every(Number.isFinite)||line.quantity<=0||line.mt<=0)) {
-    formStatus('Select each item and enter all quantities and a positive weight.');
+  if(lines.some(line=>!line||!line.pack||!Object.values(line).slice(2).every(Number.isFinite)||line.quantity<=0||line.mt<=0)) {
+    formStatus('Select each item and enter its packaging, quantities, and a positive weight.');
     return;
   }
   if(new Set(lines.map(line=>JSON.stringify([line.code,line.pack]))).size!==lines.length) {
@@ -863,7 +866,7 @@ function depotCatalogEditor() {
   if(!isFullAccess()) return;
   openModal('Upload Depot Products','Upload an Excel or CSV list for depot ordering.',
     `<form id="depot-catalog-form">
-      <p>Use Material Code, Product, and Packaging Type (UOM) columns. Packaging may be blank if your list only has codes and products. Matching codes and packaging are updated. New entries are added.</p>
+      <p>Use Material Code and Product columns. Supervisors enter packaging when ordering. Existing uploads with a packaging column are also accepted. For repeated rows with the same code and packaging, the last row is used.</p>
       ${field('Product list','<input type="file" name="file" accept=".xlsx,.csv" required>')}
       ${statusBox}</form>`,button('Template','download','depot-catalog-template')+modalButtons('Review upload','depot-catalog-form'),true);
 }
@@ -910,13 +913,13 @@ dialog.addEventListener('submit',async event=>{
       const find=names=>headings.findIndex(value=>names.includes(value));
       const code=find(['materialcode','code']),product=find(['product','item','productname','description']),pack=find(['packagingtypeuom','packagingtype','uom','packaging','pack']);
       if(code<0||product<0) throw Error('Include Material Code and Product headings.');
-      const data=rows.slice(1).filter(row=>row.some(value=>String(value??'').trim())).map((row,index)=>{
+      const products=rows.slice(1).filter(row=>row.some(value=>String(value??'').trim())).map((row,index)=>{
         const item={code:String(row[code]??'').trim(),product:String(row[product]??'').trim(),pack:pack<0?'':String(row[pack]??'').trim()};
         if(!item.code||!item.product||item.code.length>120||item.product.length>240||item.pack.length>120) throw Error('Check product details on row '+(index+2)+'.');
         return item;
       });
-      if(!data.length||data.length>5000) throw Error('Upload between 1 and 5,000 products.');
-      if(new Set(data.map(item=>JSON.stringify([item.code,item.pack]))).size!==data.length) throw Error('Remove duplicate material code and packaging combinations.');
+      if(!products.length||products.length>5000) throw Error('Upload between 1 and 5,000 products.');
+      const data=[...new Map(products.map(item=>[JSON.stringify([item.code,item.pack]),item])).values()];
       depotUpload=data;
       openModal('Review Depot Products',data.length+' products',
         `<form id="depot-catalog-confirm"><div class="table-wrap"><table><thead><tr><th>Material Code</th><th>Product</th><th>Packaging Type (UOM)</th></tr></thead>
@@ -1388,7 +1391,7 @@ const actions={
   'new-tx':()=>txEditor(),
   'depot-clear-filters':()=>{view.depotOrders=depotFilters();render(true);},
   'depot-catalog':depotCatalogEditor,
-  'depot-catalog-template':()=>download(makeSheet([['Material Code','Product','Packaging Type (UOM)']]),'depot-products-template.xlsx'),
+  'depot-catalog-template':()=>download(makeSheet([['Material Code','Product']]),'depot-products-template.xlsx'),
   'depot-excel':target=>exportDepotExcel(target.dataset.id),
   'depot-remarks':target=>depotRemarksEditor(target.dataset.id),
   'depot-new':()=>void depotOrderEditor(),
