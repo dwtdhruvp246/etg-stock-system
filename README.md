@@ -58,4 +58,4 @@ The current adapter stores one versioned stock snapshot and checks for changes a
 
 Full Access can upload an Excel or CSV product list from Depot Orders → Upload Depot Products, preview it, then save. Columns are Material Code, Product, and Packaging Type (UOM). Packaging is optional. Uploads add or update products by material code and packaging. The independent depot catalog is stored in depot_products and requires no warehouse balance.
 
-Full Access and Depot Manager can open an order, choose Edit remarks, and save remarks for each item. Excel export includes the depot at the top, order details, and Material Code, Product, Packaging Type (UOM), Quantity, Average Sales (Daily), System Stock, Physical Stock, Remarks. Existing order item snapshots are preserved.
+Full Access and Depot Manager can open an order, choose Edit remarks, and save remarks for each item. Excel export includes the depot at the top, order details, and Material Code, Product, Packaging Type (UOM), Quantity, MT, Average Sales (Daily), System Stock, Physical Stock, Remarks. Existing order item snapshots are preserved.
