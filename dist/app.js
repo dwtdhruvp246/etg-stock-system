@@ -91,7 +91,8 @@ const reportTypes=['Daily Stock Report','Current Stock Report','Warehouse Stock 
 const initialFilters=()=>({search:'',warehouse:'',product:'',pack:'',status:'',min:'',max:'',updated:'',sort:'code',dir:1,expanded:false});
 let showOutstandingDepotTotals=false;
 const depotFilters=()=>({search:'',depot:'',status:'',start:'',end:'',sort:'newest'});
-const view={depotOrders:depotFilters(),stock:initialFilters(),transactions:{search:'',type:'',warehouse:'',page:1,size:25},reports:{type:'Current Stock Report',start:'',end:'',warehouse:'',product:'',code:'',transporter:'',client:'',movement:'',status:'',page:1,size:25}};
+const outstandingFilters=()=>({search:'',depot:'',status:'',sort:'product'});
+const view={depotOutstanding:outstandingFilters(),depotOrders:depotFilters(),stock:initialFilters(),transactions:{search:'',type:'',warehouse:'',page:1,size:25},reports:{type:'Current Stock Report',start:'',end:'',warehouse:'',product:'',code:'',transporter:'',client:'',movement:'',status:'',page:1,size:25}};
 const main=document.getElementById('main');
 const nav=document.getElementById('nav');
 const dialog=document.getElementById('dialog');
@@ -413,6 +414,7 @@ function refreshParts() {
   if(route==='depot-orders') {
     if(showOutstandingDepotTotals&&canChangeDepotStatus()) {
       document.getElementById('depot-outstanding-totals').innerHTML=depotOutstandingTotals();
+      refreshOptions('depotOutstanding','depot',outstandingDepots(),view.depotOutstanding.depot);
       return;
     }
     document.getElementById('depot-orders-body').innerHTML=depotOrderRows();
@@ -608,12 +610,18 @@ function depotOrderRows() {
     <td class="t-number">${fmt(order.total_mt)} MT</td><td>${depotStatusBadge(order.status)}</td><td>${button('View',null,'depot-detail',{data:safeId(order.id)})}</td></tr>`).join('')||empty(7,orders.length?'No orders match your search or filters.':'No depot orders have been placed yet.');
 }
 
+const isOutstandingOrder=order=>order.status==='pending'||order.status==='preparing';
+const outstandingDepots=()=>unique(orders.map(order=>order.depot));
+const outstandingSorts=[['product','Product A–Z'],['code','Material code'],['heaviest','Highest tonnage'],['lightest','Lowest tonnage']];
+
 function depotOutstandingTotals() {
+  const {depot,status,search,sort}=view.depotOutstanding;
   const materials=new Map();
   let totalMt=0;
   for(const order of orders) {
-    if(order.status!=='pending'&&order.status!=='preparing') continue;
+    if(!isOutstandingOrder(order)||(depot&&order.depot!==depot)||(status&&order.status!==status)) continue;
     for(const line of order.lines) {
+      if(!match(line.code,search)&&!match(line.product,search)) continue;
       if(!materials.has(line.code)) {
         materials.set(line.code,{code:line.code,product:line.product,mt:0,units:new Map()});
       }
@@ -627,13 +635,16 @@ function depotOutstandingTotals() {
       totalMt+=Number(line.mt);
     }
   }
-  const rows=[...materials.values()].sort((a,b)=>a.product.localeCompare(b.product)||a.code.localeCompare(b.code));
-  return `<p class="sub">Combined requirements from all depots for Pending and Preparing orders.</p>
+  const byProduct=(a,b)=>a.product.localeCompare(b.product)||a.code.localeCompare(b.code);
+  const sorts={product:byProduct,code:(a,b)=>a.code.localeCompare(b.code)||byProduct(a,b),
+    heaviest:(a,b)=>b.mt-a.mt||byProduct(a,b),lightest:(a,b)=>a.mt-b.mt||byProduct(a,b)};
+  const rows=[...materials.values()].sort(sorts[sort]||byProduct);
+  return `<p class="sub">Requirements from Pending and Preparing orders that match your filters.</p>
     <div class="table-wrap" tabindex="0" aria-label="Outstanding depot totals"><table>
     <thead><tr><th>Material code</th><th>Product</th><th class="t-number">Required tonnage</th><th class="t-number">Bags / quantity by packaging</th></tr></thead>
     <tbody>${rows.map(material=>`<tr><td>${esc(material.code)}</td><td>${esc(material.product)}</td>
       <td class="t-number">${fmt(round(material.mt))} MT</td>
-      <td class="t-number">${[...material.units.values()].map(unit=>`<div>${fmt(round(unit.quantity))}${unit.packaging?' · '+esc(unit.packaging):' units'}</div>`).join('')}</td></tr>`).join('')||empty(4,'No pending or preparing depot orders.')}
+      <td class="t-number">${[...material.units.values()].map(unit=>`<div>${fmt(round(unit.quantity))}${unit.packaging?' · '+esc(unit.packaging):' units'}</div>`).join('')}</td></tr>`).join('')||empty(4,'No outstanding items match your search or filters.')}
     </tbody><tfoot><tr><th colspan="2">Total required tonnage</th><td class="t-number">${fmt(round(totalMt))} MT</td><td></td></tr></tfoot>
     </table></div>`;
 }
@@ -649,7 +660,17 @@ function depotOrdersPage() {
   const tabs=canChangeDepotStatus()?`<div class="toolbar depot-order-filters" role="group" aria-label="Depot order views">
     ${button('Orders',null,'depot-show-orders',{primary:!totals,attrs:`aria-pressed="${!totals}"`})}
     ${button('Outstanding totals',null,'depot-show-totals',{primary:totals,attrs:`aria-pressed="${totals}"`})}</div>`:'';
-  if(totals) return header+tabs+`<section id="depot-outstanding-totals">${depotOutstandingTotals()}</section>`;
+  if(totals) {
+    const scope='depotOutstanding';
+    const {search,depot,status,sort}=view[scope];
+    return header+tabs+`<div class="toolbar depot-order-filters">
+      ${searchBox(scope,'Search product or material code',search)}
+      ${filterSelect(scope,'Depot','depot',outstandingDepots(),depot,'All')}
+      ${filterSelect(scope,'Status','status',[['pending','Pending'],['preparing','Preparing']],status)}
+      ${filterSelect(scope,'Sort by','sort',outstandingSorts,sort,'')}
+      ${button('Clear filters',null,'depot-clear-outstanding')}
+    </div><section id="depot-outstanding-totals">${depotOutstandingTotals()}</section>`;
+  }
   return header+tabs+
     `<div class="toolbar depot-order-filters">
       ${searchBox(scope,'Search orders, depots, submitters or items',filters.search)}
@@ -1461,6 +1482,7 @@ const actions={
   'new-tx':()=>txEditor(),
   'depot-show-orders':()=>{showOutstandingDepotTotals=false;render(true);},
   'depot-show-totals':()=>{if(canChangeDepotStatus()){showOutstandingDepotTotals=true;render(true);}},
+  'depot-clear-outstanding':()=>{view.depotOutstanding=outstandingFilters();render(true);},
   'depot-clear-filters':()=>{view.depotOrders=depotFilters();render(true);},
   'depot-catalog':depotCatalogEditor,
   'depot-catalog-template':()=>download(makeSheet([['Material Code','Product']]),'depot-products-template.xlsx'),
@@ -1534,6 +1556,7 @@ function updateProfile() {
 
 function clearWorkspace(message='') {
   showOutstandingDepotTotals=false;
+  view.depotOutstanding=outstandingFilters();
   view.depotOrders=depotFilters();
   workspaceGeneration++;
   role='';
