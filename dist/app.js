@@ -89,6 +89,7 @@ const movementTones={
 const movementTone=type=>Object.hasOwn(movementTones,type)?movementTones[type]:['box','grey'];
 const reportTypes=['Daily Stock Report','Current Stock Report','Warehouse Stock Report','Product Stock Report','Daily Dispatch Report','Daily Receipt Report','Stock Movement Report','Transaction Report','Low Stock Report','Out-of-Stock Report','Variance Report','Transporter Report','Client Dispatch Report','Stock Adjustment Report'];
 const initialFilters=()=>({search:'',warehouse:'',product:'',pack:'',status:'',min:'',max:'',updated:'',sort:'code',dir:1,expanded:false});
+let showOutstandingDepotTotals=false;
 const depotFilters=()=>({search:'',depot:'',status:'',start:'',end:'',sort:'newest'});
 const view={depotOrders:depotFilters(),stock:initialFilters(),transactions:{search:'',type:'',warehouse:'',page:1,size:25},reports:{type:'Current Stock Report',start:'',end:'',warehouse:'',product:'',code:'',transporter:'',client:'',movement:'',status:'',page:1,size:25}};
 const main=document.getElementById('main');
@@ -410,6 +411,10 @@ function syncOptions(el,choices,value,placeholder) {
 function refreshParts() {
   if(!role) return;
   if(route==='depot-orders') {
+    if(showOutstandingDepotTotals&&canChangeDepotStatus()) {
+      document.getElementById('depot-outstanding-totals').innerHTML=depotOutstandingTotals();
+      return;
+    }
     document.getElementById('depot-orders-body').innerHTML=depotOrderRows();
     refreshOptions('depotOrders','depot',unique(orders.map(order=>order.depot)),view.depotOrders.depot);
     return;
@@ -603,13 +608,49 @@ function depotOrderRows() {
     <td class="t-number">${fmt(order.total_mt)} MT</td><td>${depotStatusBadge(order.status)}</td><td>${button('View',null,'depot-detail',{data:safeId(order.id)})}</td></tr>`).join('')||empty(7,orders.length?'No orders match your search or filters.':'No depot orders have been placed yet.');
 }
 
+function depotOutstandingTotals() {
+  const materials=new Map();
+  let totalMt=0;
+  for(const order of orders) {
+    if(order.status!=='pending'&&order.status!=='preparing') continue;
+    for(const line of order.lines) {
+      if(!materials.has(line.code)) {
+        materials.set(line.code,{code:line.code,product:line.product,mt:0,units:new Map()});
+      }
+      const material=materials.get(line.code);
+      const packaging=String(line.pack??'').trim();
+      const key=packaging.toLowerCase().replace(/\s+/g,'');
+      const unit=material.units.get(key)||{packaging,quantity:0};
+      unit.quantity+=Number(line.quantity);
+      material.units.set(key,unit);
+      material.mt+=Number(line.mt);
+      totalMt+=Number(line.mt);
+    }
+  }
+  const rows=[...materials.values()].sort((a,b)=>a.product.localeCompare(b.product)||a.code.localeCompare(b.code));
+  return `<p class="sub">Combined requirements from all depots for Pending and Preparing orders.</p>
+    <div class="table-wrap" tabindex="0" aria-label="Outstanding depot totals"><table>
+    <thead><tr><th>Material code</th><th>Product</th><th class="t-number">Required tonnage</th><th class="t-number">Bags / quantity by packaging</th></tr></thead>
+    <tbody>${rows.map(material=>`<tr><td>${esc(material.code)}</td><td>${esc(material.product)}</td>
+      <td class="t-number">${fmt(round(material.mt))} MT</td>
+      <td class="t-number">${[...material.units.values()].map(unit=>`<div>${fmt(round(unit.quantity))}${unit.packaging?' · '+esc(unit.packaging):' units'}</div>`).join('')}</td></tr>`).join('')||empty(4,'No pending or preparing depot orders.')}
+    </tbody><tfoot><tr><th colspan="2">Total required tonnage</th><td class="t-number">${fmt(round(totalMt))} MT</td><td></td></tr></tfoot>
+    </table></div>`;
+}
+
 function depotOrdersPage() {
   const filters=view.depotOrders;
   const scope='depotOrders';
   const sortChoices=[['newest','Newest first'],['oldest','Oldest first'],['depot','Depot A–Z'],
     ['heaviest','Highest tonnage'],['lightest','Lowest tonnage']];
-  return pageHead('Depot Orders',assignedDepot?esc(assignedDepot)+' · Your order history':'Orders submitted by depot supervisors.',
-    (isFullAccess()?button('Upload Depot Products','upload','depot-catalog'): '')+(canPlaceDepotOrder()?button('New Depot Order','plus','depot-new',{primary:true}):''))+
+  const header=pageHead('Depot Orders',assignedDepot?esc(assignedDepot)+' · Your order history':'Orders submitted by depot supervisors.',
+    (isFullAccess()?button('Upload Depot Products','upload','depot-catalog'): '')+(canPlaceDepotOrder()?button('New Depot Order','plus','depot-new',{primary:true}):''));
+  const totals=canChangeDepotStatus()&&showOutstandingDepotTotals;
+  const tabs=canChangeDepotStatus()?`<div class="toolbar depot-order-filters" role="group" aria-label="Depot order views">
+    ${button('Orders',null,'depot-show-orders',{primary:!totals,attrs:`aria-pressed="${!totals}"`})}
+    ${button('Outstanding totals',null,'depot-show-totals',{primary:totals,attrs:`aria-pressed="${totals}"`})}</div>`:'';
+  if(totals) return header+tabs+`<section id="depot-outstanding-totals">${depotOutstandingTotals()}</section>`;
+  return header+tabs+
     `<div class="toolbar depot-order-filters">
       ${searchBox(scope,'Search orders, depots, submitters or items',filters.search)}
       ${assignedDepot?'':filterSelect(scope,'Depot','depot',unique(orders.map(order=>order.depot)),filters.depot)}
@@ -1418,6 +1459,8 @@ const actions={
   'archive-ask':target=>archivePrompt(target.dataset.id),
   archived:archivedStock,
   'new-tx':()=>txEditor(),
+  'depot-show-orders':()=>{showOutstandingDepotTotals=false;render(true);},
+  'depot-show-totals':()=>{if(canChangeDepotStatus()){showOutstandingDepotTotals=true;render(true);}},
   'depot-clear-filters':()=>{view.depotOrders=depotFilters();render(true);},
   'depot-catalog':depotCatalogEditor,
   'depot-catalog-template':()=>download(makeSheet([['Material Code','Product']]),'depot-products-template.xlsx'),
@@ -1490,6 +1533,7 @@ function updateProfile() {
 }
 
 function clearWorkspace(message='') {
+  showOutstandingDepotTotals=false;
   view.depotOrders=depotFilters();
   workspaceGeneration++;
   role='';
