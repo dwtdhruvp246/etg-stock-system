@@ -99,7 +99,7 @@ export async function fetchDepotCatalog() {
 export async function fetchDepotOrders() {
   const orders=[];
   for(let offset=0;;offset+=100) {
-    const page=checked(await client.from('depot_orders').select('id,order_number,depot,submitted_by,created_at,lines,total_mt,status,status_changed_at')
+    const page=checked(await client.from('depot_orders').select('id,order_number,depot,submitted_by,created_at,lines,total_mt,status,status_changed_at,remarks')
       .order('order_number',{ascending:false}).range(offset,offset+99));
     orders.push(...page);
     if(page.length<100) return orders;
@@ -122,4 +122,11 @@ export async function changeDepotOrderStatus(id,expectedStatus,status) {
 
 export async function deleteDepotOrder(id) {
   checked(await client.rpc('delete_depot_order',{order_id:id}));
+}
+
+export async function uploadDepotProducts(items) {
+  checked(await client.from('depot_products').upsert(items,{onConflict:'code,pack'}));
+}
+export async function saveDepotRemarks(order,remarks) {
+  checked(await client.rpc('save_depot_remarks',{order_id:order.id,expected_remarks:order.remarks||[],new_remarks:remarks}));
 }

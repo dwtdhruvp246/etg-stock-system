@@ -53,3 +53,9 @@ Serve `dist/` over HTTPS. The project is set in `dist/supabase-config.js`. Use o
 The app includes the pinned Supabase JavaScript browser bundle in `dist/vendor/`. If you change Supabase projects, also update the allowed API origin in the Content Security Policy in `dist/index.html`.
 
 The current adapter stores one versioned stock snapshot and checks for changes about every 12 seconds. Writes are atomic. Report and stock pagination is client-side, so this storage model should be revisited for high transaction volumes.
+
+## Depot product uploads and remarks
+
+Full Access can upload an Excel or CSV product list from Depot Orders → Upload Depot Products, preview it, then save. Columns are Material Code, Product, and Packaging Type (UOM). Packaging is optional. Uploads add or update products by material code and packaging. The independent depot catalog is stored in depot_products and requires no warehouse balance.
+
+Full Access and Depot Manager can open an order, choose Edit remarks, and save remarks for each item. Excel export includes the depot at the top, order details, and Material Code, Product, Packaging Type (UOM), Quantity, Average Sales (Daily), System Stock, Physical Stock, Remarks. Existing order item snapshots are preserved.

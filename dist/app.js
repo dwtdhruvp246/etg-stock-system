@@ -1,6 +1,6 @@
 import {bindInlineSelect} from './search-select.js';
 import {zone,operator,warehouseName,partyName,directoryKinds,statuses,movements,cols,docFields,stockCols,today,stamp,round,numeric,nonNegative,isLow,isOut,stockStatus,records,stockAt,isTransfer,isRepacking,isProductionBatch,matchesMovement,canMoveBulk,canOpenStock,packageKg,repackWeight,calculate,varianceTone,saveStock,saveTransaction,saveDirectoryEntry,archiveDirectoryEntry,updateTransactionDetails,voidTransaction,audit,uid,setOperator,emptyStockState} from './model.js';
-import {AccessError,account,restoreSession,signIn,signOut,accessRole,fetchStock,writeStock,depotAssignment,fetchDepotCatalog,fetchDepotOrders,submitDepotOrder,saveManagedDepotOrder,changeDepotOrderStatus,deleteDepotOrder} from './backend.js';
+import {AccessError,account,restoreSession,signIn,signOut,accessRole,fetchStock,writeStock,depotAssignment,fetchDepotCatalog,fetchDepotOrders,submitDepotOrder,saveManagedDepotOrder,changeDepotOrderStatus,deleteDepotOrder,uploadDepotProducts,saveDepotRemarks} from './backend.js';
 import {readTable,makeCsv,makeSheet,makePdf,download} from './files.js';
 
 const icons={
@@ -578,6 +578,7 @@ const depotColumns=[
   ['mt','MT'],['average_sales','Average Sales (Daily)'],['system_stock','System Stock (QTY)'],['physical_stock','Physical Stock'],
 ];
 const depotNumericColumn=key=>['quantity','mt','average_sales','system_stock','physical_stock'].includes(key)?'t-number':'';
+const lineRemarks=(order,line)=>(order.remarks||[]).find(item=>item.code===line.code&&item.pack===line.pack)?.remarks||'';
 const depotOrderNumber=order=>'DO-'+String(order.order_number).padStart(5,'0');
 
 function depotOrderRows() {
@@ -608,7 +609,7 @@ function depotOrdersPage() {
   const sortChoices=[['newest','Newest first'],['oldest','Oldest first'],['depot','Depot A–Z'],
     ['heaviest','Highest tonnage'],['lightest','Lowest tonnage']];
   return pageHead('Depot Orders',assignedDepot?esc(assignedDepot)+' · Your order history':'Orders submitted by depot supervisors.',
-    canPlaceDepotOrder()?button('New Depot Order','plus','depot-new',{primary:true}):'')+
+    (isFullAccess()?button('Upload Depot Products','upload','depot-catalog'): '')+(canPlaceDepotOrder()?button('New Depot Order','plus','depot-new',{primary:true}):''))+
     `<div class="toolbar depot-order-filters">
       ${searchBox(scope,'Search orders, depots, submitters or items',filters.search)}
       ${assignedDepot?'':filterSelect(scope,'Depot','depot',unique(orders.map(order=>order.depot)),filters.depot)}
@@ -649,7 +650,7 @@ async function depotOrderEditor(order) {
     catalog=items;
     depotOrderRequest=order?.id||uid();
     if(!catalog.length) {
-      itemRequest.textContent='The stock catalog has no active items to order.';
+      itemRequest.textContent='Upload depot products from the Depot Orders page before placing an order.';
       return;
     }
     openModal(title,esc(depot),`<form id="depot-order-form" data-edit="${Boolean(order)}">
@@ -779,15 +780,16 @@ function depotOrderDetail(id) {
   const order=orders.find(order=>order.id===id);
   if(!order) return;
   const data=safeId(id);
-  const actions=isFullAccess()?button('Print','report','depot-print',{data})+
+  const manager=canChangeDepotStatus();
+  const actions=(manager?button('Excel','download','depot-excel',{data})+button('Edit remarks',null,'depot-remarks',{data}):'')+(isFullAccess()?button('Print','report','depot-print',{data})+
     button('Save PDF','download','depot-pdf',{data})+button('Edit',null,'depot-edit',{data})+
-    button('Delete',null,'depot-delete',{data}):'';
+    button('Delete',null,'depot-delete',{data}):'');
   const canReceive=role==='depot_only'&&order.status==='sent';
   const statusChoices=canReceive?[['received','Received']]:depotStatuses;
   const statusForm=(canReceive||canChangeDepotStatus())?`<form id="depot-status-form" ${data} ${safeId(order.status,'status')}>
     ${field('Order status',select('status',statusChoices,canReceive?'received':order.status))}
     <button class="btn primary" type="submit">${canReceive?'Mark as received':'Update status'}</button>${statusBox}</form>`:'';
-  openModal('Depot Order','',depotOrderDocument(order)+statusForm,button('Close',null,'close')+actions,true);
+  openModal('Depot Order','',depotOrderDocument(order)+order.lines.filter(line=>lineRemarks(order,line)).map(line=>`<p><strong>${esc(line.product)} remarks</strong> ${esc(lineRemarks(order,line))}</p>`).join('')+statusForm,button('Close',null,'close')+actions,true);
 }
 
 dialog.addEventListener('submit',async event=>{
@@ -855,6 +857,91 @@ function exportDepotOrder(id,format) {
   const title=`${depotOrderNumber(order)} · ${order.depot}`;
   download(makePdf(title,rows,{subtitle:`Placed by ${order.submitted_by} | ${dateTime(order.created_at)} CAT | ${depotStatusLabel(order.status)}`}),depotOrderNumber(order)+'.pdf');
 }
+
+
+function depotCatalogEditor() {
+  if(!isFullAccess()) return;
+  openModal('Upload Depot Products','Upload an Excel or CSV list for depot ordering.',
+    `<form id="depot-catalog-form">
+      <p>Use Material Code, Product, and Packaging Type (UOM) columns. Packaging may be blank if your list only has codes and products. Matching codes and packaging are updated. New entries are added.</p>
+      ${field('Product list','<input type="file" name="file" accept=".xlsx,.csv" required>')}
+      ${statusBox}</form>`,button('Template','download','depot-catalog-template')+modalButtons('Review upload','depot-catalog-form'),true);
+}
+let depotUpload=[];
+let remarksEditing=null;
+function depotRemarksEditor(id) {
+  if(!canChangeDepotStatus()) return;
+  const order=orders.find(item=>item.id===id);
+  if(!order) return;
+  remarksEditing=order;
+  openModal('Edit Order Remarks',esc(order.depot)+' · '+depotOrderNumber(order),
+    `<form id="depot-remarks-form">${order.lines.map((line,index)=>field(line.code+' · '+line.product+' · '+line.pack,
+      textarea('remark-'+index,lineRemarks(order,line),'maxlength="2000"'))).join('')}${statusBox}</form>`,
+    modalButtons('Save remarks','depot-remarks-form'),true);
+}
+function exportDepotExcel(id) {
+  if(!canChangeDepotStatus()) return;
+  const order=orders.find(item=>item.id===id);
+  if(!order) return;
+  const columns=[['code','Material Code'],['product','Product'],['pack','Packaging Type (UOM)'],['quantity','Quantity'],
+    ['average_sales','Average Sales (Daily)'],['system_stock','System Stock'],['physical_stock','Physical Stock']];
+  const rows=[['Depot',order.depot],['Order',depotOrderNumber(order)],['Date and time (CAT)',dateTime(order.created_at)],
+    ['Status',depotStatusLabel(order.status)],[],[...columns.map(([,label])=>label),'Remarks'],
+    ...order.lines.map(line=>[...columns.map(([key])=>line[key]),lineRemarks(order,line)])];
+  download(makeSheet(rows),depotOrderNumber(order)+'.xlsx');
+}
+dialog.addEventListener('submit',async event=>{
+  const form=event.target;
+  if(!['depot-catalog-form','depot-catalog-confirm','depot-remarks-form'].includes(form.id)) return;
+  event.preventDefault();
+  const submitter=event.submitter;
+  if(!submitter||submitter.disabled) return;
+  submitter.disabled=true;
+  const generation=workspaceGeneration;
+  try {
+    if(form.id==='depot-catalog-form') {
+      if(!isFullAccess()) return;
+      const file=new FormData(form).get('file');
+      if(!file?.size||file.size>10000000) throw Error('Choose a non-empty file below 10 MB.');
+      const rows=await readTable(file);
+      if(generation!==workspaceGeneration||!form.isConnected) return;
+      const normalize=value=>String(value||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+      const headings=rows[0]?.map(normalize)||[];
+      const find=names=>headings.findIndex(value=>names.includes(value));
+      const code=find(['materialcode','code']),product=find(['product','item','productname','description']),pack=find(['packagingtypeuom','packagingtype','uom','packaging','pack']);
+      if(code<0||product<0) throw Error('Include Material Code and Product headings.');
+      const data=rows.slice(1).filter(row=>row.some(value=>String(value??'').trim())).map((row,index)=>{
+        const item={code:String(row[code]??'').trim(),product:String(row[product]??'').trim(),pack:pack<0?'':String(row[pack]??'').trim()};
+        if(!item.code||!item.product||item.code.length>120||item.product.length>240||item.pack.length>120) throw Error('Check product details on row '+(index+2)+'.');
+        return item;
+      });
+      if(!data.length||data.length>5000) throw Error('Upload between 1 and 5,000 products.');
+      if(new Set(data.map(item=>JSON.stringify([item.code,item.pack]))).size!==data.length) throw Error('Remove duplicate material code and packaging combinations.');
+      depotUpload=data;
+      openModal('Review Depot Products',data.length+' products',
+        `<form id="depot-catalog-confirm"><div class="table-wrap"><table><thead><tr><th>Material Code</th><th>Product</th><th>Packaging Type (UOM)</th></tr></thead>
+        <tbody>${data.slice(0,100).map(item=>`<tr><td>${esc(item.code)}</td><td>${esc(item.product)}</td><td>${esc(item.pack)}</td></tr>`).join('')}</tbody></table></div>
+        <p>Showing up to 100 rows. Saving applies all ${data.length} products to the depot catalog.</p>${statusBox}</form>`,
+        modalButtons('Save products','depot-catalog-confirm'),true);
+    } else if(form.id==='depot-catalog-confirm') {
+      if(!isFullAccess()||!depotUpload.length) return;
+      await uploadDepotProducts(depotUpload);
+      if(generation!==workspaceGeneration) return;
+      depotUpload=[];dialog.close();toast('Depot products saved.');
+    } else {
+      if(!canChangeDepotStatus()||!remarksEditing) return;
+      const order=remarksEditing;
+      const values=new FormData(form);
+      const remarks=order.lines.map((line,index)=>({code:line.code,pack:line.pack,remarks:String(values.get('remark-'+index)||'')}));
+      await saveDepotRemarks(order,remarks);
+      const history=await fetchDepotOrders();
+      if(generation!==workspaceGeneration) return;
+      orders=history;depotOrderDetail(order.id);toast('Remarks saved.');
+    }
+  } catch(error) {
+    if(form.isConnected) formStatus(error.message);
+  } finally {submitter.disabled=false;}
+});
 
 function txEditor(fromHistory=null) {
   const item=fromHistory?stockAt(db,fromHistory.code,fromHistory.warehouse):null;
@@ -1300,6 +1387,10 @@ const actions={
   archived:archivedStock,
   'new-tx':()=>txEditor(),
   'depot-clear-filters':()=>{view.depotOrders=depotFilters();render(true);},
+  'depot-catalog':depotCatalogEditor,
+  'depot-catalog-template':()=>download(makeSheet([['Material Code','Product','Packaging Type (UOM)']]),'depot-products-template.xlsx'),
+  'depot-excel':target=>exportDepotExcel(target.dataset.id),
+  'depot-remarks':target=>depotRemarksEditor(target.dataset.id),
   'depot-new':()=>void depotOrderEditor(),
   'depot-edit':target=>{
     const order=orders.find(item=>item.id===target.dataset.id);
