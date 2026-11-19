@@ -624,9 +624,9 @@ function depotOrdersPage() {
 
 const depotOrderRow=()=>`<section class="depot-entry">
   <div class="form-grid three">
-    ${field('Item',input('','','search','data-depot-item-search role="combobox" aria-autocomplete="list" aria-expanded="false" placeholder="Type item name or material code" autocomplete="off"')+
-      select('item',catalog.map((item,index)=>[index,`${item.product} · ${item.code} · ${item.pack}`]),'','Select item','hidden'))}
-    ${field('Material Code',input('code','','text','readonly'))}
+    ${field('Item',input('','','search','data-depot-item-search role="combobox" aria-autocomplete="list" aria-expanded="false" placeholder="Type item name" autocomplete="off"')+
+      select('item',catalog.map((item,index)=>[index,item.product]),'','Select item','hidden'))}
+    ${field('Material Code',input('code','','text','required maxlength="120" autocomplete="off" placeholder="Enter material code"'))}
     ${field('Packaging Type (UOM)',input('pack','','text','maxlength="120" required'))}
     ${field('Quantity',input('quantity','','number','required min="0.001" step="0.001" max="1000000000"'))}
     ${field('MT',input('mt','','number','required min="0.001" step="0.001" max="1000000000"'))}
@@ -665,12 +665,13 @@ async function depotOrderEditor(order) {
       const search=setupDepotItemSearch(row);
       const line=order?.lines[index];
       if(!line) return;
-      const exact=catalog.findIndex(item=>item.code===line.code&&item.pack===line.pack);
+      const exact=catalog.findIndex(item=>item.code===line.code&&item.product===line.product);
       const itemIndex=exact>=0?exact:catalog.findIndex(item=>item.code===line.code);
       const item=row.querySelector('[name="item"]');
       if(itemIndex>=0) {
         item.value=String(itemIndex);
         search.value=item.selectedOptions[0].text;
+        row.querySelector('[name="code"]').value=catalog[itemIndex].code;
       }
       for(const name of ['quantity','average_sales','system_stock','physical_stock']) {
         row.querySelector(`[name="${name}"]`).value=line[name];
@@ -692,6 +693,26 @@ function setupDepotItemSearch(row) {
   select.value='';
   search.removeAttribute('name');
   bindInlineSelect(search,select);
+  const code=row.querySelector('[name="code"]');
+  code.addEventListener('input',()=>{
+    const entered=code.value.trim().toLowerCase();
+    const current=select.value===''?null:catalog[Number(select.value)];
+    if(current?.code.toLowerCase()===entered) return;
+    const matches=catalog.filter(item=>item.code.toLowerCase()===entered);
+    const products=new Set(matches.map(item=>item.product));
+    const match=products.size===1?matches[0]:null;
+    select.value=match?String(catalog.indexOf(match)):'';
+    search.value=match?.product||'';
+    code.setCustomValidity(!entered||match?'':products.size>1
+      ?'This code matches multiple products. Select the item by name.'
+      :'Enter a material code from the catalog.');
+    if(match) {
+      code.value=match.code;
+      const pack=row.querySelector('[name="pack"]');
+      pack.value=match.pack;
+      updateDepotTotal(pack);
+    }
+  });
   return search;
 }
 
@@ -703,8 +724,11 @@ function updateDepotTotal(changed) {
     const itemIndex=row.querySelector('[name="item"]').value;
     const item=itemIndex===''?null:catalog[Number(itemIndex)];
     const field=name=>row.querySelector(`[name="${name}"]`);
-    field('code').value=item?.code||'';
-    if(changed.name==='item') field('pack').value=item?.pack||'';
+    if(changed.name==='item') {
+      field('code').value=item?.code||'';
+      field('code').setCustomValidity('');
+      field('pack').value=item?.pack||'';
+    }
     const kg=Number(field('pack').value.match(/([0-9]+(?:\.[0-9]+)?)\s*kg\b/i)?.[1]||0);
     const weight=field('mt');
     weight.readOnly=kg>0;
@@ -741,13 +765,14 @@ dialog.addEventListener('submit',async event=>{
     const read=name=>row.querySelector(`[name="${name}"]`).value;
     const item=read('item');
     if(item===''||!catalog[Number(item)]) return null;
-    const {code}=catalog[Number(item)];
+    const {code,product}=catalog[Number(item)];
+    if(read('code').trim().toLowerCase()!==code.toLowerCase()) return null;
     const pack=read('pack').trim();
     const numbers=Object.fromEntries(['quantity','mt','average_sales','system_stock','physical_stock']
       .map(name=>[name,read(name)===''?NaN:Number(read(name))]));
-    return {code,pack,...numbers,remarks:read('remarks')};
+    return {code,pack,...numbers,remarks:read('remarks'),product};
   });
-  if(lines.some(line=>!line||!line.pack||!Object.values(line).slice(2,-1).every(Number.isFinite)||line.quantity<=0||line.mt<=0)) {
+  if(lines.some(line=>!line||!line.pack||!Object.values(line).slice(2,-2).every(Number.isFinite)||line.quantity<=0||line.mt<=0)) {
     formStatus('Select each item and enter its packaging, quantities, and a positive weight.');
     return;
   }
