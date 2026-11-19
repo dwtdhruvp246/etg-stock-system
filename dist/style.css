@@ -259,3 +259,6 @@ details .form-grid{margin-top:10px}
   .topbar{gap:8px}
   .crumb,.top-right{gap:6px}
 }
+
+.depot-line-remarks{min-width:210px;max-width:360px;white-space:pre-wrap;overflow-wrap:anywhere}
+.depot-line-remarks textarea{display:block;white-space:pre-wrap}

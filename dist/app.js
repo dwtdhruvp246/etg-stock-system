@@ -1,7 +1,7 @@
 import {bindInlineSelect} from './search-select.js';
 import {zone,operator,warehouseName,partyName,directoryKinds,statuses,movements,cols,docFields,stockCols,today,stamp,round,numeric,nonNegative,isLow,isOut,stockStatus,records,stockAt,isTransfer,isRepacking,isProductionBatch,matchesMovement,canMoveBulk,canOpenStock,packageKg,repackWeight,calculate,varianceTone,saveStock,saveTransaction,saveDirectoryEntry,archiveDirectoryEntry,updateTransactionDetails,voidTransaction,audit,uid,setOperator,emptyStockState} from './model.js';
 import {AccessError,account,restoreSession,signIn,signOut,accessRole,fetchStock,writeStock,depotAssignment,fetchDepotCatalog,fetchDepotOrders,submitDepotOrder,saveManagedDepotOrder,changeDepotOrderStatus,deleteDepotOrder,uploadDepotProducts,saveDepotRemarks} from './backend.js?v=depot-catalog-1';
-import {readTable,makeCsv,makeSheet,makePdf,download} from './files.js';
+import {readTable,makeCsv,makeSheet,makePdf,download} from './files.js?v=depot-remarks-1';
 
 const icons={
   brand:'<path d="m12 2 8.5 4.8v10.4L12 22l-8.5-4.8V6.8L12 2Z"/><path d="m3.5 6.8 8.5 4.8 8.5-4.8m-8.5 4.8V22m4.25-12.8L7.75 4.4"/>',
@@ -578,7 +578,7 @@ const depotColumns=[
   ['mt','MT'],['average_sales','Average Sales (Daily)'],['system_stock','System Stock (QTY)'],['physical_stock','Physical Stock'],
 ];
 const depotNumericColumn=key=>['quantity','mt','average_sales','system_stock','physical_stock'].includes(key)?'t-number':'';
-const lineRemarks=(order,line)=>(order.remarks||[]).find(item=>item.code===line.code&&item.pack===line.pack)?.remarks||'';
+const lineRemarks=(order,line)=>(order.remarks||[]).find(item=>item.code===line.code&&item.pack===line.pack)?.remarks??line.remarks??'';
 const depotOrderNumber=order=>'DO-'+String(order.order_number).padStart(5,'0');
 
 function depotOrderRows() {
@@ -633,6 +633,7 @@ const depotOrderRow=()=>`<section class="depot-entry">
     ${field('Average Sales (Daily)',input('average_sales','','number','required min="0" step="0.001" max="1000000000"'))}
     ${field('System Stock (QTY)',input('system_stock','','number','required min="0" step="0.001" max="1000000000"'))}
     ${field('Physical Stock',input('physical_stock','','number','required min="0" step="0.001" max="1000000000"'))}
+    ${field('Remarks',textarea('remarks','','maxlength="2000"'))}
   </div>
   <button type="button" class="btn" data-depot-row="remove">Remove item</button>
 </section>`;
@@ -675,6 +676,7 @@ async function depotOrderEditor(order) {
         row.querySelector(`[name="${name}"]`).value=line[name];
       }
       row.querySelector('[name="pack"]').value=line.pack;
+      row.querySelector('[name="remarks"]').value=line.remarks||'';
       updateDepotTotal(row.querySelector('[name="pack"]'));
       row.querySelector('[name="mt"]').value=line.mt;
     });
@@ -743,9 +745,9 @@ dialog.addEventListener('submit',async event=>{
     const pack=read('pack').trim();
     const numbers=Object.fromEntries(['quantity','mt','average_sales','system_stock','physical_stock']
       .map(name=>[name,read(name)===''?NaN:Number(read(name))]));
-    return {code,pack,...numbers};
+    return {code,pack,...numbers,remarks:read('remarks')};
   });
-  if(lines.some(line=>!line||!line.pack||!Object.values(line).slice(2).every(Number.isFinite)||line.quantity<=0||line.mt<=0)) {
+  if(lines.some(line=>!line||!line.pack||!Object.values(line).slice(2,-1).every(Number.isFinite)||line.quantity<=0||line.mt<=0)) {
     formStatus('Select each item and enter its packaging, quantities, and a positive weight.');
     return;
   }
@@ -772,19 +774,20 @@ dialog.addEventListener('submit',async event=>{
   }
 });
 
-function depotOrderDocument(order) {
+function depotOrderDocument(order,editable=false) {
   return `<div class="depot-document"><h2>${esc(order.depot)} · ${depotOrderNumber(order)}</h2>
     <p>Placed by ${esc(order.submitted_by)} · ${esc(dateTime(order.created_at))} CAT · ${esc(depotStatusLabel(order.status))}</p>
-    <div class="table-wrap"><table><thead><tr>${depotColumns.map(([key,label])=>`<th class="${depotNumericColumn(key)}">${esc(label)}</th>`).join('')}</tr></thead>
-    <tbody>${order.lines.map(line=>`<tr>${depotColumns.map(([key])=>`<td class="${depotNumericColumn(key)}">${esc(typeof line[key]==='number'?fmt(line[key]):line[key])}</td>`).join('')}</tr>`).join('')}</tbody>
-    <tfoot><tr><th colspan="7">Total tonnage</th><td class="t-number">${fmt(order.total_mt)} MT</td></tr></tfoot></table></div></div>`;
+    <div class="table-wrap"><table><thead><tr>${depotColumns.map(([key,label])=>`<th class="${depotNumericColumn(key)}">${esc(label)}</th>`).join('')}<th>Remarks</th></tr></thead>
+    <tbody>${order.lines.map((line,index)=>`<tr>${depotColumns.map(([key])=>`<td class="${depotNumericColumn(key)}">${esc(typeof line[key]==='number'?fmt(line[key]):line[key])}</td>`).join('')}<td class="depot-line-remarks">${editable?textarea('remark-'+index,lineRemarks(order,line),
+      `maxlength="2000" aria-label="Remarks for ${esc(line.product)}"`):esc(lineRemarks(order,line))}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><th colspan="7">Total tonnage</th><td class="t-number">${fmt(order.total_mt)} MT</td><td></td></tr></tfoot></table></div></div>`;
 }
 function depotOrderDetail(id) {
   const order=orders.find(order=>order.id===id);
   if(!order) return;
   const data=safeId(id);
   const manager=canChangeDepotStatus();
-  const actions=(manager?button('Excel','download','depot-excel',{data})+button('Edit remarks',null,'depot-remarks',{data}):'')+(isFullAccess()?button('Print','report','depot-print',{data})+
+  const actions=(manager?button('Excel','download','depot-excel',{data}):'')+(isFullAccess()?button('Print','report','depot-print',{data})+
     button('Save PDF','download','depot-pdf',{data})+button('Edit',null,'depot-edit',{data})+
     button('Delete',null,'depot-delete',{data}):'');
   const canReceive=role==='depot_only'&&order.status==='sent';
@@ -792,7 +795,11 @@ function depotOrderDetail(id) {
   const statusForm=(canReceive||canChangeDepotStatus())?`<form id="depot-status-form" ${data} ${safeId(order.status,'status')}>
     ${field('Order status',select('status',statusChoices,canReceive?'received':order.status))}
     <button class="btn primary" type="submit">${canReceive?'Mark as received':'Update status'}</button>${statusBox}</form>`:'';
-  openModal('Depot Order','',depotOrderDocument(order)+order.lines.filter(line=>lineRemarks(order,line)).map(line=>`<p><strong>${esc(line.product)} remarks</strong> ${esc(lineRemarks(order,line))}</p>`).join('')+statusForm,button('Close',null,'close')+actions,true);
+  remarksEditing=manager?order:null;
+  const details=manager?`<form id="depot-remarks-form">${depotOrderDocument(order,true)}
+    <p data-remarks-status role="status" hidden></p></form>`:depotOrderDocument(order);
+  const save=manager?'<button type="submit" form="depot-remarks-form" class="btn primary">Save remarks</button>':'';
+  openModal('Depot Order','',details+statusForm,button('Close',null,'close')+actions+save,true);
 }
 
 dialog.addEventListener('submit',async event=>{
@@ -872,16 +879,6 @@ function depotCatalogEditor() {
 }
 let depotUpload=[];
 let remarksEditing=null;
-function depotRemarksEditor(id) {
-  if(!canChangeDepotStatus()) return;
-  const order=orders.find(item=>item.id===id);
-  if(!order) return;
-  remarksEditing=order;
-  openModal('Edit Order Remarks',esc(order.depot)+' · '+depotOrderNumber(order),
-    `<form id="depot-remarks-form">${order.lines.map((line,index)=>field(line.code+' · '+line.product+' · '+line.pack,
-      textarea('remark-'+index,lineRemarks(order,line),'maxlength="2000"'))).join('')}${statusBox}</form>`,
-    modalButtons('Save remarks','depot-remarks-form'),true);
-}
 function exportDepotExcel(id) {
   if(!canChangeDepotStatus()) return;
   const order=orders.find(item=>item.id===id);
@@ -890,8 +887,9 @@ function exportDepotExcel(id) {
     ['average_sales','Average Sales (Daily)'],['system_stock','System Stock'],['physical_stock','Physical Stock']];
   const rows=[['Depot',order.depot],['Order',depotOrderNumber(order)],['Date and time (CAT)',dateTime(order.created_at)],
     ['Status',depotStatusLabel(order.status)],[],[...columns.map(([,label])=>label),'Remarks'],
-    ...order.lines.map(line=>[...columns.map(([key])=>line[key]),lineRemarks(order,line)])];
-  download(makeSheet(rows),depotOrderNumber(order)+'.xlsx');
+    ...order.lines.map(line=>[...columns.map(([key])=>line[key]),lineRemarks(order,line)]),
+    ['Total tonnage (MT)',Number(order.total_mt),'','','','','','']];
+  download(makeSheet(rows,{tableStart:5}),depotOrderNumber(order)+'.xlsx');
 }
 dialog.addEventListener('submit',async event=>{
   const form=event.target;
@@ -939,10 +937,16 @@ dialog.addEventListener('submit',async event=>{
       await saveDepotRemarks(order,remarks);
       const history=await fetchDepotOrders();
       if(generation!==workspaceGeneration) return;
-      orders=history;depotOrderDetail(order.id);toast('Remarks saved.');
+      orders=history;
+      if(form.isConnected) depotOrderDetail(order.id);
+      toast('Remarks saved.');
     }
   } catch(error) {
-    if(form.isConnected) formStatus(error.message);
+    if(form.isConnected) {
+      const status=form.querySelector('[data-remarks-status]');
+      if(status) { status.hidden=false; status.textContent=error.message; }
+      else formStatus(error.message);
+    }
   } finally {submitter.disabled=false;}
 });
 
@@ -1393,7 +1397,6 @@ const actions={
   'depot-catalog':depotCatalogEditor,
   'depot-catalog-template':()=>download(makeSheet([['Material Code','Product']]),'depot-products-template.xlsx'),
   'depot-excel':target=>exportDepotExcel(target.dataset.id),
-  'depot-remarks':target=>depotRemarksEditor(target.dataset.id),
   'depot-new':()=>void depotOrderEditor(),
   'depot-edit':target=>{
     const order=orders.find(item=>item.id===target.dataset.id);

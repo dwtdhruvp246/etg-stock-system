@@ -157,19 +157,36 @@ export async function readTable(file) {
     return row;
   });
 }
-export function makeSheet(rows) {
+export function makeSheet(rows,{tableStart}={}) {
   const ns='http://schemas.openxmlformats.org';
   const header='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-  const data=rows.map((row,index)=>`<row r="${index+1}">${row.map((value,col)=>{
-    const r=columnName(col)+(index+1);
-    return typeof value==='number' && Number.isFinite(value) ? `<c r="${r}"><v>${value}</v></c>` : `<c r="${r}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;
-  }).join('')}</row>`).join('');
+  const styled=Number.isInteger(tableStart);
+  const widths=styled?rows.reduce((columns,row)=>{
+    row.forEach((value,index)=>{
+      const longest=Math.max(...String(value??'').split(/\r?\n/).map(line=>line.length));
+      columns[index]=Math.min(55,Math.max(columns[index]||12,Math.ceil(longest*1.15)+3));
+    });
+    return columns;
+  },[]):[];
+  const cols=styled?'<cols>'+widths.map((width,index)=>`<col min="${index+1}" max="${index+1}" width="${width}" customWidth="1"/>`).join('')+'</cols>':'';
+  const data=rows.map((row,index)=>{
+    const lines=styled?Math.max(1,...row.map((value,col)=>String(value??'').split(/\r?\n/)
+      .reduce((sum,line)=>sum+Math.max(1,Math.ceil(line.length/Math.floor((widths[col]-3)/1.15))),0))):1;
+    const height=lines>1?` ht="${Math.min(409,lines*16+3)}" customHeight="1"`:'';
+    const style=styled&&row.length?` s="${index===tableStart||index===rows.length-1?2:1}"`:'';
+    return `<row r="${index+1}"${height}>${row.map((value,col)=>{
+      const r=columnName(col)+(index+1);
+      return typeof value==='number' && Number.isFinite(value) ? `<c r="${r}"${style}><v>${value}</v></c>` : `<c r="${r}"${style} t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;
+    }).join('')}</row>`;
+  }).join('');
+  const styles=`<styleSheet xmlns="${ns}/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>${[0,1].map(font=>`<xf numFmtId="0" fontId="${font}" fillId="0" borderId="1" xfId="0" applyBorder="1" applyFont="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>`).join('')}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
   return zip({
-    '[Content_Types].xml':header+`<Types xmlns="${ns}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+    '[Content_Types].xml':header+`<Types xmlns="${ns}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>${styled?'<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>':''}</Types>`,
     '_rels/.rels':header+`<Relationships xmlns="${ns}/package/2006/relationships"><Relationship Id="rId1" Type="${ns}/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
     'xl/workbook.xml':header+`<workbook xmlns="${ns}/spreadsheetml/2006/main" xmlns:r="${ns}/officeDocument/2006/relationships"><sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets></workbook>`,
-    'xl/_rels/workbook.xml.rels':header+`<Relationships xmlns="${ns}/package/2006/relationships"><Relationship Id="rId1" Type="${ns}/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
-    'xl/worksheets/sheet1.xml':header+`<worksheet xmlns="${ns}/spreadsheetml/2006/main"><sheetData>${data}</sheetData></worksheet>`,
+    'xl/_rels/workbook.xml.rels':header+`<Relationships xmlns="${ns}/package/2006/relationships"><Relationship Id="rId1" Type="${ns}/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>${styled?`<Relationship Id="rId2" Type="${ns}/officeDocument/2006/relationships/styles" Target="styles.xml"/>`:''}</Relationships>`,
+    ...(styled?{'xl/styles.xml':header+styles}:{}),
+    'xl/worksheets/sheet1.xml':header+`<worksheet xmlns="${ns}/spreadsheetml/2006/main">${cols}<sheetData>${data}</sheetData></worksheet>`,
   });
 }
 export function makeCsv(rows) {
