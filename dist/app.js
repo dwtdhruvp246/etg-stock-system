@@ -971,11 +971,11 @@ function exportDepotExcel(id) {
   const order=orders.find(item=>item.id===id);
   if(!order) return;
   const columns=[['code','Material Code'],['product','Product'],['pack','Packaging Type (UOM)'],['quantity','Quantity'],
-    ['average_sales','Average Sales (Daily)'],['system_stock','System Stock'],['physical_stock','Physical Stock']];
+    ['mt','MT'],['average_sales','Average Sales (Daily)'],['system_stock','System Stock'],['physical_stock','Physical Stock']];
   const rows=[['Depot',order.depot],['Order',depotOrderNumber(order)],['Date and time (CAT)',dateTime(order.created_at)],
     ['Status',depotStatusLabel(order.status)],[],[...columns.map(([,label])=>label),'Remarks'],
     ...order.lines.map(line=>[...columns.map(([key])=>line[key]),lineRemarks(order,line)]),
-    ['Total tonnage (MT)',Number(order.total_mt),'','','','','','']];
+    ['Total tonnage (MT)',Number(order.total_mt),'','','','','','','']];
   download(makeSheet(rows,{tableStart:5}),depotOrderNumber(order)+'.xlsx');
 }
 dialog.addEventListener('submit',async event=>{
